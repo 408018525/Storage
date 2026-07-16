@@ -87,6 +87,8 @@ interface ApplicationRow {
   renewed_at?: string | null;
   renew_count?: number | null;
   deleted_at?: string | null;
+  delete_requested_at?: string | null;
+  delete_requested_by?: string | null;
 }
 
 interface AppSettings {
@@ -188,6 +190,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   match = pathname.match(/^\/api\/applications\/([^/]+)\/renew$/);
   if (match && method === 'POST') return renewOwnApplication(request, env, decodeURIComponent(match[1]));
 
+  match = pathname.match(/^\/api\/applications\/([^/]+)\/delete-request$/);
+  if (match && method === 'POST') return requestDeleteOwnApplication(request, env, decodeURIComponent(match[1]));
+
   if (method === 'GET' && pathname === '/api/admin/overview') return adminOverview(request, env);
   if (method === 'GET' && pathname === '/api/admin/applications') return adminApplications(request, env, url);
   if (method === 'GET' && pathname === '/api/admin/users') return adminUsers(request, env);
@@ -199,7 +204,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   match = pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
   if (match && method === 'PATCH') return adminUpdateUser(request, env, decodeURIComponent(match[1]));
 
-  match = pathname.match(/^\/api\/admin\/applications\/([^/]+)\/(approve|reject|revoke|delete)$/);
+  match = pathname.match(/^\/api\/admin\/applications\/([^/]+)\/(approve|reject|revoke|delete|approve-delete|reject-delete)$/);
   if (match && method === 'POST') return adminReviewApplication(request, env, decodeURIComponent(match[1]), match[2]);
 
   throw new HttpError(404, 'NOT_FOUND', '接口不存在');
@@ -260,6 +265,8 @@ async function ensureSchema(env: Env): Promise<void> {
         renewed_at TEXT,
         renew_count INTEGER DEFAULT 0,
         deleted_at TEXT,
+        delete_requested_at TEXT,
+        delete_requested_by TEXT,
         updated_at TEXT,
         FOREIGN KEY(user_id) REFERENCES users(id)
       )
@@ -290,6 +297,8 @@ async function ensureSchema(env: Env): Promise<void> {
     `ALTER TABLE domain_applications ADD COLUMN renewed_at TEXT`,
     `ALTER TABLE domain_applications ADD COLUMN renew_count INTEGER DEFAULT 0`,
     `ALTER TABLE domain_applications ADD COLUMN deleted_at TEXT`,
+    `ALTER TABLE domain_applications ADD COLUMN delete_requested_at TEXT`,
+    `ALTER TABLE domain_applications ADD COLUMN delete_requested_by TEXT`,
     `ALTER TABLE domain_applications ADD COLUMN updated_at TEXT`,
     `ALTER TABLE domain_applications ADD COLUMN record_type TEXT DEFAULT 'CNAME'`,
     `ALTER TABLE domain_applications ADD COLUMN record_content TEXT DEFAULT ''`,
@@ -668,6 +677,27 @@ async function renewOwnApplication(request: Request, env: Env, id: string): Prom
   return ok({ application: serializeApplication(updated!, settings) });
 }
 
+async function requestDeleteOwnApplication(request: Request, env: Env, id: string): Promise<Response> {
+  const user = await requireUser(env, request);
+  const app = await env.DB.prepare(`
+    SELECT * FROM domain_applications
+    WHERE id=? AND user_id=? AND status='approved' AND (deleted_at IS NULL OR deleted_at='')
+  `).bind(id, user.id).first<ApplicationRow>();
+
+  if (!app) throw new HttpError(404, 'NOT_FOUND', '只有正常域名可以申请删除');
+  if (app.delete_requested_at) throw new HttpError(409, 'DELETE_ALREADY_REQUESTED', '该域名已提交删除申请，等待管理员审核');
+
+  await env.DB.prepare(`
+    UPDATE domain_applications
+    SET delete_requested_at=datetime('now'), delete_requested_by=?, updated_at=datetime('now')
+    WHERE id=? AND user_id=?
+  `).bind(user.id, id, user.id).run();
+
+  await audit(env, request, user.id, 'application.delete_request', 'domain_application', id);
+  const updated = await env.DB.prepare(`SELECT * FROM domain_applications WHERE id=?`).bind(id).first<ApplicationRow>();
+  return ok({ application: serializeApplication(updated!, await loadSettings(env)) });
+}
+
 async function deleteOwnApplication(request: Request, env: Env, id: string): Promise<Response> {
   const user = await requireUser(env, request);
   const settings = await loadSettings(env);
@@ -699,7 +729,8 @@ async function adminOverview(request: Request, env: Env): Promise<Response> {
       SUM(status='pending') AS pending,
       SUM(status='approved') AS approved,
       SUM(status='rejected') AS rejected,
-      SUM(status='revoked') AS revoked
+      SUM(status='revoked') AS revoked,
+      SUM(CASE WHEN delete_requested_at IS NOT NULL AND delete_requested_at!='' THEN 1 ELSE 0 END) AS delete_requested
       FROM domain_applications WHERE (deleted_at IS NULL OR deleted_at='')
     `).first<any>(),
     env.DB.prepare(`SELECT COUNT(*) AS count FROM domain_applications WHERE date(created_at)=date('now')`).first<any>(),
@@ -747,6 +778,43 @@ async function adminReviewApplication(request: Request, env: Env, id: string, ac
     if (app.status === 'approved' && app.dns_record_id) throw new HttpError(409, 'REVOKE_FIRST', '正常域名请先撤销 DNS 后再删除');
     await env.DB.prepare(`UPDATE domain_applications SET deleted_at=datetime('now'),updated_at=datetime('now') WHERE id=?`).bind(id).run();
     await audit(env, request, admin.id, 'admin.application_delete', 'domain_application', id);
+    return ok({ deleted: true });
+  }
+
+  if (action === 'reject-delete') {
+    if (!app.delete_requested_at) throw new HttpError(409, 'NO_DELETE_REQUEST', '该域名没有删除申请');
+    await env.DB.prepare(`
+      UPDATE domain_applications
+      SET delete_requested_at=NULL, delete_requested_by=NULL, review_note=?, reviewed_at=datetime('now'), reviewed_by=?, updated_at=datetime('now')
+      WHERE id=?
+    `).bind(note, admin.id, id).run();
+    await audit(env, request, admin.id, 'admin.application_delete_reject', 'domain_application', id, { note });
+    return ok({ deleteRejected: true });
+  }
+
+  if (action === 'approve-delete') {
+    if (!app.delete_requested_at) throw new HttpError(409, 'NO_DELETE_REQUEST', '该域名没有删除申请');
+    const suffix = settings.dns.suffixes.find(x => x.suffixAscii === app.suffix_ascii);
+    if (!suffix) throw new HttpError(409, 'SUFFIX_MISSING', '该后缀配置不存在');
+    const token = resolveDnsToken(env);
+    if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
+
+    if (app.dns_record_id) {
+      try { await deleteDnsRecord(token, suffix.zoneId, app.dns_record_id); }
+      catch (error) {
+        const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 删除失败';
+        await env.DB.prepare(`UPDATE domain_applications SET error_message=?, updated_at=datetime('now') WHERE id=?`).bind(message, id).run();
+        throw new HttpError(502, 'DNS_DELETE_FAILED', message);
+      }
+    }
+
+    await env.DB.prepare(`
+      UPDATE domain_applications
+      SET deleted_at=datetime('now'), delete_requested_at=NULL, delete_requested_by=NULL,
+          review_note=?, reviewed_at=datetime('now'), reviewed_by=?, dns_record_id=NULL, error_message=NULL, updated_at=datetime('now')
+      WHERE id=?
+    `).bind(note, admin.id, id).run();
+    await audit(env, request, admin.id, 'admin.application_delete_approve', 'domain_application', id, { note });
     return ok({ deleted: true });
   }
 
@@ -1002,6 +1070,7 @@ function serializeApplication(app: ApplicationRow, settings: AppSettings) {
   const remainingMs = expires ? expires.getTime() - Date.now() : null;
   const remainingDays = remainingMs === null ? null : Math.max(0, Math.ceil(remainingMs / DAY));
   const canRenew = app.status === 'approved' && remainingDays !== null && remainingDays <= settings.domain.renewWindowDays;
+  const deleteRequested = Boolean(app.delete_requested_at);
 
   return {
     id: app.id,
@@ -1018,7 +1087,7 @@ function serializeApplication(app: ApplicationRow, settings: AppSettings) {
     proxied: Boolean(app.proxied),
     ttl: Number(app.ttl || 1),
     status: app.status,
-    statusText: statusLabel(app.status),
+    statusText: deleteRequested && app.status === 'approved' ? '待删除审核' : statusLabel(app.status),
     reviewNote: app.review_note || '',
     errorMessage: app.error_message || '',
     dnsRecordId: app.dns_record_id || '',
@@ -1027,11 +1096,14 @@ function serializeApplication(app: ApplicationRow, settings: AppSettings) {
     reviewedAt: app.reviewed_at || null,
     expiresAt: expires ? expires.toISOString() : null,
     renewedAt: app.renewed_at || null,
+    deleteRequested,
+    deleteRequestedAt: app.delete_requested_at || null,
     renewCount: Number(app.renew_count || 0),
     remainingDays,
     remainingText: expires ? (remainingDays === 0 ? '今天到期' : `${remainingDays} 天`) : '未设置到期时间',
-    canRenew,
+    canRenew: canRenew && !deleteRequested,
     canDelete: ['rejected', 'revoked'].includes(app.status) && !app.deleted_at,
+    canRequestDelete: app.status === 'approved' && !deleteRequested && !app.deleted_at,
   };
 }
 
