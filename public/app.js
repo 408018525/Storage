@@ -10,6 +10,21 @@ const state = {
   widgetId: null,
 };
 
+
+const DEFAULT_DOMAIN_CONFIG = {
+  defaultQuota: 3,
+  validDays: 365,
+  renewWindowDays: 60,
+  allowUserDeleteInvalid: true,
+  allowDnsEditAfterApproved: true,
+};
+function domainConfig(value = state.config?.domain) {
+  return { ...DEFAULT_DOMAIN_CONFIG, ...(value || {}) };
+}
+function suffixList() {
+  return state.config?.suffixes || state.config?.dns?.suffixes || [];
+}
+
 const statusText = {
   pending: '待审核',
   processing: '处理中',
@@ -315,7 +330,7 @@ async function renderApply() {
       </section>
 
       <section class="card">
-        <div class="section-head"><div><h2>最近域名</h2><p>默认有效期 ${state.config.domain.validDays} 天，最后 ${state.config.domain.renewWindowDays} 天可申请续期。</p></div><a class="btn soft" href="#/domains">全部域名</a></div>
+        <div class="section-head"><div><h2>最近域名</h2><p>默认有效期 ${domainConfig().validDays} 天，最后 ${domainConfig().renewWindowDays} 天可申请续期。</p></div><a class="btn soft" href="#/domains">全部域名</a></div>
         ${recentHtml || '<div class="empty">暂无域名，点击右上方注册新域名。</div>'}
       </section>`);
     document.querySelector('#open-register').addEventListener('click', showRegisterDomainModal);
@@ -325,7 +340,7 @@ async function renderApply() {
 }
 
 function showRegisterDomainModal() {
-  const suffixes = state.config.suffixes || [];
+  const suffixes = suffixList();
   const options = suffixes.map(s => `<option value="${attr(s.suffix)}">${esc(s.label)} / ${esc(s.suffix)}</option>`).join('');
   openModal('注册新域名', '选择根域名并输入前缀，快速注册一个专属您的免费域名', `
     <form id="domain-register-form" class="modal-form">
@@ -496,7 +511,7 @@ async function renderDomainDetail(id) {
               <dt>剩余时间</dt><dd>${esc(a.remainingText)}</dd>
               <dt>续期次数</dt><dd>${esc(a.renewCount || 0)}</dd>
             </dl></div>
-            <div class="info-card"><h2>操作</h2><p>默认有效期 ${state.config.domain.validDays} 天，最后 ${state.config.domain.renewWindowDays} 天可续期。</p>${a.canRenew ? `<button class="btn success" data-renew-one>立即续期</button>` : `<button class="btn secondary" disabled>暂不可续期</button>`}</div>
+            <div class="info-card"><h2>操作</h2><p>默认有效期 ${domainConfig().validDays} 天，最后 ${domainConfig().renewWindowDays} 天可续期。</p>${a.canRenew ? `<button class="btn success" data-renew-one>立即续期</button>` : `<button class="btn secondary" disabled>暂不可续期</button>`}</div>
           </div>
         </div>
       </section>`);
@@ -516,7 +531,7 @@ async function renderDomainDetail(id) {
 }
 
 function showDnsModal(a) {
-  const suffix = (state.config.suffixes || []).find(s => s.suffix === a.suffixUnicode) || (state.config.suffixes || [])[0] || {};
+  const suffix = (suffixList()).find(s => s.suffix === a.suffixUnicode) || (suffixList())[0] || {};
   const types = suffix.allowedTypes?.length ? suffix.allowedTypes : ['CNAME'];
   openModal('添加解析', `为 ${a.fqdnUnicode} 设置 DNS 解析`, `
     <form id="dns-form" class="modal-form">
@@ -727,11 +742,11 @@ async function renderAdminSettings() {
 
       <div class="tab-page" data-page="domain">
         <form id="domain-form" class="form-grid">
-          <label class="field"><span>默认域名额度</span><input name="defaultQuota" type="number" min="1" max="9999" value="${attr(settings.domain.defaultQuota)}"></label>
-          <label class="field"><span>默认有效天数</span><input name="validDays" type="number" min="1" max="3650" value="${attr(settings.domain.validDays)}"></label>
-          <label class="field"><span>允许续期窗口/天</span><input name="renewWindowDays" type="number" min="1" max="3650" value="${attr(settings.domain.renewWindowDays)}"></label>
-          <label class="check wide"><input name="allowUserDeleteInvalid" type="checkbox" ${settings.domain.allowUserDeleteInvalid ? 'checked' : ''}> 用户可删除无效域名</label>
-          <label class="check wide"><input name="allowDnsEditAfterApproved" type="checkbox" ${settings.domain.allowDnsEditAfterApproved ? 'checked' : ''}> 生效后允许用户修改 DNS</label>
+          <label class="field"><span>默认域名额度</span><input name="defaultQuota" type="number" min="1" max="9999" value="${attr(domainConfig(settings.domain).defaultQuota)}"></label>
+          <label class="field"><span>默认有效天数</span><input name="validDays" type="number" min="1" max="3650" value="${attr(domainConfig(settings.domain).validDays)}"></label>
+          <label class="field"><span>允许续期窗口/天</span><input name="renewWindowDays" type="number" min="1" max="3650" value="${attr(domainConfig(settings.domain).renewWindowDays)}"></label>
+          <label class="check wide"><input name="allowUserDeleteInvalid" type="checkbox" ${domainConfig(settings.domain).allowUserDeleteInvalid ? 'checked' : ''}> 用户可删除无效域名</label>
+          <label class="check wide"><input name="allowDnsEditAfterApproved" type="checkbox" ${domainConfig(settings.domain).allowDnsEditAfterApproved ? 'checked' : ''}> 生效后允许用户修改 DNS</label>
           <button class="btn primary wide" type="submit">保存域名规则</button>
         </form>
       </div>
@@ -770,7 +785,7 @@ function bindSettingForm(selector, group, mapper) {
       const { settings } = await api(`/api/admin/settings/${group}`, { method:'PUT', body:mapper(new FormData(form)) });
       state.config.site = settings.site;
       state.config.registration = settings.registration;
-      state.config.domain = settings.domain;
+      state.config.domain = domainConfig(settings.domain);
       applyTheme();
       toast('设置已保存', 'success');
       btn.disabled = false;
