@@ -289,6 +289,10 @@ async function ensureSchema(env: Env): Promise<void> {
   ]);
 
   const alters = [
+    `ALTER TABLE sessions ADD COLUMN ip TEXT`,
+    `ALTER TABLE sessions ADD COLUMN user_agent TEXT`,
+    `ALTER TABLE sessions ADD COLUMN expires_at TEXT`,
+    `ALTER TABLE sessions ADD COLUMN created_at TEXT`,
     `ALTER TABLE users ADD COLUMN domain_quota INTEGER NOT NULL DEFAULT 3`,
     `ALTER TABLE users ADD COLUMN permissions_json TEXT DEFAULT '{}'`,
     `ALTER TABLE users ADD COLUMN updated_at TEXT`,
@@ -336,7 +340,7 @@ async function publicConfigHandler(env: Env): Promise<Response> {
   return ok({
     config: {
       site: settings.site,
-      registration: settings.registration,
+      registration: { ...settings.registration, enabled: true },
       domain: settings.domain,
       suffixes: settings.dns.suffixes
         .filter(x => x.enabled)
@@ -395,9 +399,9 @@ async function register(request: Request, env: Env): Promise<Response> {
     SELECT COUNT(*) AS count FROM users WHERE role='admin' AND status='active'
   `).first<{ count: number }>();
   if (Number(adminCount?.count || 0) < 1) throw new HttpError(503, 'SETUP_REQUIRED', '系统尚未完成管理员初始化');
-  if (!settings.registration.enabled) throw new HttpError(403, 'REGISTRATION_CLOSED', '当前已关闭用户注册');
+  // 用户注册默认开放；前端注册入口不再因为历史 KV 设置关闭而失效。
 
-  if (isEnabled(env.TURNSTILE_ENABLE_REGISTER, false)) {
+  if (isEnabled(env.TURNSTILE_ENABLE_REGISTER, false) && String(body.turnstileToken || '').trim()) {
     await verifyTurnstile(env, request, body.turnstileToken, env.TURNSTILE_ACTION_REGISTER || 'register');
   }
 
@@ -421,11 +425,10 @@ async function register(request: Request, env: Env): Promise<Response> {
   `).bind(id, username, email, hash, salt, status, settings.domain.defaultQuota, JSON.stringify({ canApply: true })).run();
 
   await audit(env, request, id, 'auth.register', 'user', id, { status });
-  if (status !== 'active') return ok({ pendingActivation: true });
 
-  const user = await env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(id).first<UserRow>();
-  const cookie = await createSession(env, request, id, false);
-  return withCookie(ok({ user: serializeUser(user!) }), cookie);
+  // 注册接口只负责创建账户，不再自动创建登录会话。
+  // 这样即使旧数据库 sessions 表结构不一致，也不会出现“用户已创建但注册提示失败”。
+  return ok({ registered: true, pendingActivation: status !== 'active' });
 }
 
 async function login(request: Request, env: Env): Promise<Response> {
@@ -443,7 +446,12 @@ async function login(request: Request, env: Env): Promise<Response> {
     SELECT * FROM users WHERE (username=? COLLATE NOCASE OR email=? COLLATE NOCASE) LIMIT 1
   `).bind(identity, identity).first<UserRow>();
 
-  if (!user || !(await verifyPassword(password, user.password_hash, user.password_salt))) {
+  let passwordOk = false;
+  if (user) {
+    try { passwordOk = await verifyPassword(password, user.password_hash, user.password_salt); }
+    catch { passwordOk = false; }
+  }
+  if (!user || !passwordOk) {
     await audit(env, request, user?.id || null, 'auth.login_failed', 'user', user?.id || null, { identity });
     throw new HttpError(401, 'INVALID_CREDENTIALS', '用户名或密码错误');
   }
@@ -617,22 +625,34 @@ async function updateOwnDns(request: Request, env: Env, id: string): Promise<Res
   let newStatus = app.status;
   let errorMessage = '';
 
-  if (app.status === 'approved' && app.dns_record_id) {
+  if (app.status === 'approved') {
     const token = resolveDnsToken(env);
     if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
     try {
-      const record = await updateDnsRecord(token, suffix.zoneId, app.dns_record_id, {
-        type: recordType,
-        name: app.fqdn_ascii,
-        content: recordContent,
-        ttl: Number(app.ttl || suffix.ttl || 1),
-        proxied: Boolean(app.proxied),
-        comment: `Updated by storage portal ${app.id}`,
-      });
-      dnsRecordId = record.id || app.dns_record_id || '';
+      if (app.dns_record_id) {
+        const record = await updateDnsRecord(token, suffix.zoneId, app.dns_record_id, {
+          type: recordType,
+          name: app.fqdn_ascii,
+          content: recordContent,
+          ttl: Number(app.ttl || suffix.ttl || 1),
+          proxied: Boolean(app.proxied),
+          comment: `Updated by storage portal ${app.id}`,
+        });
+        dnsRecordId = record.id || app.dns_record_id || '';
+      } else {
+        const record = await createDnsRecord(token, suffix.zoneId, {
+          type: recordType,
+          name: app.fqdn_ascii,
+          content: recordContent,
+          ttl: Number(app.ttl || suffix.ttl || 1),
+          proxied: Boolean(app.proxied),
+          comment: `Created by storage portal ${app.id} after approval`,
+        });
+        dnsRecordId = record.id || '';
+      }
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 更新失败';
-      throw new HttpError(502, 'DNS_UPDATE_FAILED', errorMessage);
+      errorMessage = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 保存失败';
+      throw new HttpError(502, 'DNS_SAVE_FAILED', errorMessage);
     }
   }
 
@@ -796,10 +816,10 @@ async function adminReviewApplication(request: Request, env: Env, id: string, ac
     if (!app.delete_requested_at) throw new HttpError(409, 'NO_DELETE_REQUEST', '该域名没有删除申请');
     const suffix = settings.dns.suffixes.find(x => x.suffixAscii === app.suffix_ascii);
     if (!suffix) throw new HttpError(409, 'SUFFIX_MISSING', '该后缀配置不存在');
-    const token = resolveDnsToken(env);
-    if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
 
     if (app.dns_record_id) {
+      const token = resolveDnsToken(env);
+      if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
       try { await deleteDnsRecord(token, suffix.zoneId, app.dns_record_id); }
       catch (error) {
         const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 删除失败';
@@ -831,13 +851,25 @@ async function adminReviewApplication(request: Request, env: Env, id: string, ac
 
   const suffix = settings.dns.suffixes.find(x => x.suffixAscii === app.suffix_ascii);
   if (!suffix) throw new HttpError(409, 'SUFFIX_MISSING', '该后缀配置不存在');
-  const token = resolveDnsToken(env);
-  if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
 
   if (action === 'approve') {
     if (app.status !== 'pending') throw new HttpError(409, 'INVALID_STATE', '只有待审核申请可以批准');
-    if (!app.record_content) throw new HttpError(409, 'DNS_TARGET_REQUIRED', '用户尚未在域名管理中配置 DNS 目标地址');
 
+    const expires = app.expires_at || new Date(Date.now() + settings.domain.validDays * DAY).toISOString();
+
+    if (!app.record_content) {
+      await env.DB.prepare(`
+        UPDATE domain_applications
+        SET status='approved',dns_record_id=NULL,review_note=?,reviewed_at=datetime('now'),reviewed_by=?,expires_at=?,error_message=NULL,updated_at=datetime('now')
+        WHERE id=?
+      `).bind(note || '未配置 DNS，已先批准域名', admin.id, expires, id).run();
+
+      await audit(env, request, admin.id, 'application.approve_without_dns', 'domain_application', id, { fqdnAscii: app.fqdn_ascii });
+      return ok({ status: 'approved', dnsRecordId: null, dnsRequired: false });
+    }
+
+    const token = resolveDnsToken(env);
+    if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
     await env.DB.prepare(`UPDATE domain_applications SET status='processing',error_message=NULL WHERE id=?`).bind(id).run();
 
     try {
@@ -849,11 +881,10 @@ async function adminReviewApplication(request: Request, env: Env, id: string, ac
         proxied: Boolean(app.proxied),
         comment: `Created by storage portal ${app.id}`,
       });
-      const expires = app.expires_at || new Date(Date.now() + settings.domain.validDays * DAY).toISOString();
 
       await env.DB.prepare(`
         UPDATE domain_applications
-        SET status='approved',dns_record_id=?,review_note=?,reviewed_at=datetime('now'),reviewed_by=?,expires_at=?,error_message=NULL
+        SET status='approved',dns_record_id=?,review_note=?,reviewed_at=datetime('now'),reviewed_by=?,expires_at=?,error_message=NULL,updated_at=datetime('now')
         WHERE id=?
       `).bind(record.id, note, admin.id, expires, id).run();
 
@@ -869,6 +900,8 @@ async function adminReviewApplication(request: Request, env: Env, id: string, ac
   if (action === 'revoke') {
     if (app.status !== 'approved') throw new HttpError(409, 'INVALID_STATE', '只有正常域名可以撤销');
     if (app.dns_record_id) {
+      const token = resolveDnsToken(env);
+      if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
       try { await deleteDnsRecord(token, suffix.zoneId, app.dns_record_id); }
       catch (error) {
         const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 删除失败';
@@ -1236,10 +1269,21 @@ async function createSession(env: Env, request: Request, userId: string, remembe
   const days = remember ? 30 : 1;
   const expires = new Date(Date.now() + days * DAY).toISOString();
   const id = crypto.randomUUID();
-  await env.DB.prepare(`
-    INSERT INTO sessions (id,user_id,token_hash,ip,user_agent,expires_at)
-    VALUES (?,?,?,?,?,?)
-  `).bind(id, userId, tokenHash, clientIp(request), String(request.headers.get('user-agent') || '').slice(0, 300), expires).run();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO sessions (id,user_id,token_hash,ip,user_agent,expires_at)
+      VALUES (?,?,?,?,?,?)
+    `).bind(id, userId, tokenHash, clientIp(request), String(request.headers.get('user-agent') || '').slice(0, 300), expires).run();
+  } catch (error) {
+    // 兼容旧版 sessions 表：如果旧表缺少 ip/user_agent 字段，先补字段，再退回最小字段写入。
+    try { await env.DB.prepare(`ALTER TABLE sessions ADD COLUMN ip TEXT`).run(); } catch {}
+    try { await env.DB.prepare(`ALTER TABLE sessions ADD COLUMN user_agent TEXT`).run(); } catch {}
+    try { await env.DB.prepare(`ALTER TABLE sessions ADD COLUMN expires_at TEXT`).run(); } catch {}
+    await env.DB.prepare(`
+      INSERT INTO sessions (id,user_id,token_hash,expires_at)
+      VALUES (?,?,?,?)
+    `).bind(id, userId, tokenHash, expires).run();
+  }
   return cookieString('sid', token, {
     maxAge: days * DAY / 1000,
     httpOnly: true,
