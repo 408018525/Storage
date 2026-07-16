@@ -443,6 +443,8 @@ function domainCard(a) {
     <div class="card-actions">
       <button class="btn soft" data-manage="${attr(a.id)}">管理域名</button>
       ${a.canRenew ? `<button class="btn success" data-renew="${attr(a.id)}">续期</button>` : ''}
+      ${a.canRequestDelete ? `<button class="btn danger-soft" data-request-delete="${attr(a.id)}">申请删除域名</button>` : ''}
+      ${a.deleteRequested ? `<button class="btn secondary" disabled>删除待审核</button>` : ''}
       ${a.canDelete ? `<button class="btn danger-soft" data-delete="${attr(a.id)}">删除无效域名</button>` : ''}
     </div>
   </article>`;
@@ -452,6 +454,7 @@ function bindDomainCardActions() {
   document.querySelectorAll('[data-manage]').forEach(btn => btn.addEventListener('click', () => go(`#/domain/${btn.dataset.manage}`)));
   document.querySelectorAll('[data-renew]').forEach(btn => btn.addEventListener('click', () => renewDomain(btn.dataset.renew)));
   document.querySelectorAll('[data-delete]').forEach(btn => btn.addEventListener('click', () => showDeleteDomainModal(btn.dataset.delete)));
+  document.querySelectorAll('[data-request-delete]').forEach(btn => btn.addEventListener('click', () => showRequestDeleteDomainModal(btn.dataset.requestDelete)));
 }
 
 async function renderDomainDetail(id) {
@@ -472,6 +475,8 @@ async function renderDomainDetail(id) {
           <div class="detail-actions">
             <button class="btn primary" id="add-dns">＋ 添加解析</button>
             ${a.canRenew ? `<button class="btn success" id="renew-domain">▣ 续期</button>` : ''}
+            ${a.canRequestDelete ? `<button class="btn danger-soft" id="request-delete-domain">申请删除</button>` : ''}
+            ${a.deleteRequested ? `<button class="btn secondary" disabled>删除待审核</button>` : ''}
           </div>
         </div>
       </section>
@@ -497,6 +502,8 @@ async function renderDomainDetail(id) {
               <div class="quick-actions">
                 <button class="btn primary" data-open-dns>＋ 添加解析</button>
                 ${a.canRenew ? `<button class="btn success" data-renew-one>▣ 续期</button>` : '<button class="btn secondary" disabled>未到续期时间</button>'}
+                ${a.canRequestDelete ? `<button class="btn danger-soft" data-request-delete-one>申请删除域名</button>` : ''}
+                ${a.deleteRequested ? `<button class="btn secondary" disabled>删除待审核</button>` : ''}
                 ${a.canDelete ? `<button class="btn danger-soft" data-delete-one>删除无效域名</button>` : ''}
               </div>
             </div>
@@ -529,6 +536,8 @@ async function renderDomainDetail(id) {
     document.querySelectorAll('#add-dns,[data-open-dns]').forEach(btn => btn.addEventListener('click', () => showDnsModal(a)));
     document.querySelectorAll('#renew-domain,[data-renew-one]').forEach(btn => btn.addEventListener('click', () => renewDomain(a.id)));
     document.querySelector('[data-delete-one]')?.addEventListener('click', () => showDeleteDomainModal(a.id));
+    document.querySelector('#request-delete-domain')?.addEventListener('click', () => showRequestDeleteDomainModal(a.id));
+    document.querySelector('[data-request-delete-one]')?.addEventListener('click', () => showRequestDeleteDomainModal(a.id));
   } catch (error) {
     toast(error.message, 'error');
     go('#/domains');
@@ -583,6 +592,31 @@ function showDeleteDomainModal(id) {
       closeModal();
       toast('无效域名已删除', 'success');
       await renderDomains();
+    } catch (error) { toast(error.message, 'error'); btn.disabled = false; }
+  });
+}
+
+
+function showRequestDeleteDomainModal(id) {
+  const a = state.applications.find(x => x.id === id) || {};
+  openModal('申请删除域名', '正常域名需要管理员审核后才会删除。管理员通过后，系统会自动删除 Cloudflare DNS 记录并从列表隐藏。', `
+    <div class="delete-box">
+      <p>确认提交删除申请：</p>
+      <strong>${esc(a.fqdnUnicode || id)}</strong>
+      <p class="danger-text">提交后域名会显示“待删除审核”，审核期间仍占用额度。</p>
+    </div>
+    <div class="modal-actions"><button type="button" class="btn secondary" data-cancel>取消</button><button class="btn danger" id="confirm-request-delete">确认申请删除</button></div>
+  `);
+  document.querySelector('[data-cancel]').addEventListener('click', closeModal);
+  document.querySelector('#confirm-request-delete').addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await api(`/api/applications/${encodeURIComponent(id)}/delete-request`, { method:'POST', body:{} });
+      closeModal();
+      toast('删除申请已提交，等待管理员审核', 'success');
+      if (location.hash.startsWith('#/domain/')) await renderDomainDetail(id);
+      else await renderDomains();
     } catch (error) { toast(error.message, 'error'); btn.disabled = false; }
   });
 }
@@ -651,16 +685,17 @@ async function renderAdminApplications() {
       <td>${a.expiresAt ? fmtDate(a.expiresAt) : '—'}<br><small>${esc(a.remainingText || '')}</small></td>
       <td class="actions-cell">
         ${a.status === 'pending' ? `<button class="btn success small" data-review="approve" data-id="${a.id}">批准</button><button class="btn danger-soft small" data-review="reject" data-id="${a.id}">拒绝</button>` : ''}
-        ${a.status === 'approved' ? `<button class="btn danger-soft small" data-review="revoke" data-id="${a.id}">撤销</button>` : ''}
+        ${a.deleteRequested ? `<button class="btn danger small" data-review="approve-delete" data-id="${a.id}">批准删除</button><button class="btn soft small" data-review="reject-delete" data-id="${a.id}">拒绝删除</button>` : ''}
+        ${a.status === 'approved' && !a.deleteRequested ? `<button class="btn danger-soft small" data-review="revoke" data-id="${a.id}">撤销</button>` : ''}
         ${['rejected','revoked'].includes(a.status) ? `<button class="btn danger-soft small" data-review="delete" data-id="${a.id}">删除</button>` : ''}
       </td>
     </tr>`).join('');
     shell('域名审核', `<section class="card"><div class="section-head"><div><h2>域名审核</h2><p>用户需先配置 DNS，管理员批准后写入 Cloudflare DNS。</p></div></div><div class="table-wrap"><table><thead><tr><th>域名</th><th>用户</th><th>DNS</th><th>状态</th><th>到期</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="6">暂无申请</td></tr>'}</tbody></table></div></section>`);
     document.querySelectorAll('[data-review]').forEach(btn => btn.addEventListener('click', async () => {
       const action = btn.dataset.review;
-      const label = { approve:'批准', reject:'拒绝', revoke:'撤销', delete:'删除' }[action];
+      const label = { approve:'批准', reject:'拒绝', revoke:'撤销', delete:'删除', 'approve-delete':'批准删除', 'reject-delete':'拒绝删除' }[action];
       if (!confirm(`确认${label}该域名？`)) return;
-      const note = action === 'delete' ? '' : (prompt('管理员备注，可留空', '') ?? '');
+      const note = (action === 'delete' || action === 'approve-delete') ? '' : (prompt('管理员备注，可留空', '') ?? '');
       btn.disabled = true;
       try {
         await api(`/api/admin/applications/${btn.dataset.id}/${action}`, { method:'POST', body:{ note } });
