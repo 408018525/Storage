@@ -313,7 +313,8 @@ async function ensureSchema(env: Env): Promise<void> {
     UPDATE domain_applications
     SET expires_at = datetime(COALESCE(reviewed_at, created_at), '+' || ? || ' days')
     WHERE (expires_at IS NULL OR expires_at='')
-      AND status NOT IN ('rejected','revoked','deleted')
+      AND status NOT IN ('rejected','revoked')
+      AND (deleted_at IS NULL OR deleted_at='')
   `).bind(settings.domain.validDays).run();
 }
 
@@ -365,14 +366,14 @@ async function bootstrapAdmin(request: Request, env: Env): Promise<Response> {
 
   await env.DB.prepare(`
     INSERT INTO users (id, username, email, password_hash, password_salt, role, status, domain_quota, permissions_json)
-    VALUES (?, ?, ?, ?, ?, 'admin', 'active', 9999, ?)
-  `).bind(id, username, email, hash, salt, JSON.stringify({ canApply: true })).run();
+    VALUES (?, ?, ?, ?, ?, 'admin', 'active', ?, ?)
+  `).bind(id, username, email, hash, salt, settings.domain.defaultQuota, JSON.stringify({ canApply: true })).run();
 
   await audit(env, request, id, 'setup.bootstrap_admin', 'user', id);
   const cookie = await createSession(env, request, id, false);
   return withCookie(ok({ user: serializeUser({
     id, username, email, password_hash: '', password_salt: '', role: 'admin', status: 'active',
-    domain_quota: 9999, permissions_json: '{}', created_at: new Date().toISOString(),
+    domain_quota: settings.domain.defaultQuota, permissions_json: '{}', created_at: new Date().toISOString(),
   }) }), cookie);
 }
 
@@ -488,14 +489,15 @@ async function listOwnApplications(request: Request, env: Env): Promise<Response
   const settings = await loadSettings(env);
   const rows = await env.DB.prepare(`
     SELECT * FROM domain_applications
-    WHERE user_id=? AND status!='deleted'
+    WHERE user_id=? AND (deleted_at IS NULL OR deleted_at='')
     ORDER BY created_at DESC
     LIMIT 500
   `).bind(user.id).all<ApplicationRow>();
 
   const apps = (rows.results || []).map(x => serializeApplication(x, settings));
   const used = apps.filter(x => !['rejected', 'revoked', 'deleted'].includes(x.status)).length;
-  const total = user.role === 'admin' ? 9999 : Number(user.domain_quota || settings.domain.defaultQuota);
+  const rawTotal = Number(user.domain_quota || settings.domain.defaultQuota);
+  const total = rawTotal >= 9999 ? settings.domain.defaultQuota : rawTotal;
 
   return ok({
     applications: apps,
@@ -511,7 +513,7 @@ async function listOwnApplications(request: Request, env: Env): Promise<Response
 async function getOwnApplication(request: Request, env: Env, id: string): Promise<Response> {
   const user = await requireUser(env, request);
   const app = await env.DB.prepare(`
-    SELECT * FROM domain_applications WHERE id=? AND user_id=? AND status!='deleted'
+    SELECT * FROM domain_applications WHERE id=? AND user_id=? AND (deleted_at IS NULL OR deleted_at='')
   `).bind(id, user.id).first<ApplicationRow>();
   if (!app) throw new HttpError(404, 'NOT_FOUND', '域名不存在');
   return ok({ application: serializeApplication(app, await loadSettings(env)) });
@@ -545,17 +547,20 @@ async function createApplication(request: Request, env: Env): Promise<Response> 
   const duplicate = await env.DB.prepare(`
     SELECT id,status FROM domain_applications
     WHERE fqdn_ascii=? COLLATE NOCASE
-      AND status NOT IN ('rejected','revoked','deleted')
+      AND status NOT IN ('rejected','revoked')
+      AND (deleted_at IS NULL OR deleted_at='')
     LIMIT 1
   `).bind(fqdnAscii).first<{ id: string; status: string }>();
   if (duplicate) throw new HttpError(409, 'DOMAIN_EXISTS', '该域名已被注册或正在审核');
 
   const activeCount = await env.DB.prepare(`
     SELECT COUNT(*) AS count FROM domain_applications
-    WHERE user_id=? AND status NOT IN ('rejected','revoked','deleted')
+    WHERE user_id=? AND status NOT IN ('rejected','revoked')
+      AND (deleted_at IS NULL OR deleted_at='')
   `).bind(user.id).first<{ count: number }>();
 
-  const totalQuota = user.role === 'admin' ? 9999 : Number(user.domain_quota || settings.domain.defaultQuota);
+  const rawQuota = Number(user.domain_quota || settings.domain.defaultQuota);
+  const totalQuota = rawQuota >= 9999 ? settings.domain.defaultQuota : rawQuota;
   if (Number(activeCount?.count || 0) >= totalQuota) {
     throw new HttpError(403, 'DOMAIN_QUOTA_EXCEEDED', `您的域名额度已用完，当前额度为 ${totalQuota} 个`);
   }
@@ -584,7 +589,7 @@ async function updateOwnDns(request: Request, env: Env, id: string): Promise<Res
   const body = await readJson<Record<string, unknown>>(request);
   const settings = await loadSettings(env);
   const app = await env.DB.prepare(`
-    SELECT * FROM domain_applications WHERE id=? AND user_id=? AND status!='deleted'
+    SELECT * FROM domain_applications WHERE id=? AND user_id=? AND (deleted_at IS NULL OR deleted_at='')
   `).bind(id, user.id).first<ApplicationRow>();
   if (!app) throw new HttpError(404, 'NOT_FOUND', '域名不存在');
   if (['rejected', 'revoked'].includes(app.status)) throw new HttpError(409, 'INVALID_STATE', '无效域名不能修改解析');
@@ -669,7 +674,7 @@ async function deleteOwnApplication(request: Request, env: Env, id: string): Pro
   if (!settings.domain.allowUserDeleteInvalid) throw new HttpError(403, 'DELETE_DISABLED', '管理员未开放用户删除无效域名');
 
   const app = await env.DB.prepare(`
-    SELECT * FROM domain_applications WHERE id=? AND user_id=? AND status!='deleted'
+    SELECT * FROM domain_applications WHERE id=? AND user_id=? AND (deleted_at IS NULL OR deleted_at='')
   `).bind(id, user.id).first<ApplicationRow>();
   if (!app) throw new HttpError(404, 'NOT_FOUND', '域名不存在');
 
@@ -678,7 +683,7 @@ async function deleteOwnApplication(request: Request, env: Env, id: string): Pro
   }
 
   await env.DB.prepare(`
-    UPDATE domain_applications SET status='deleted', deleted_at=datetime('now') WHERE id=? AND user_id=?
+    UPDATE domain_applications SET deleted_at=datetime('now'), updated_at=datetime('now') WHERE id=? AND user_id=?
   `).bind(id, user.id).run();
 
   await audit(env, request, user.id, 'application.delete_invalid', 'domain_application', id);
@@ -695,7 +700,7 @@ async function adminOverview(request: Request, env: Env): Promise<Response> {
       SUM(status='approved') AS approved,
       SUM(status='rejected') AS rejected,
       SUM(status='revoked') AS revoked
-      FROM domain_applications WHERE status!='deleted'
+      FROM domain_applications WHERE (deleted_at IS NULL OR deleted_at='')
     `).first<any>(),
     env.DB.prepare(`SELECT COUNT(*) AS count FROM domain_applications WHERE date(created_at)=date('now')`).first<any>(),
   ]);
@@ -712,14 +717,14 @@ async function adminApplications(request: Request, env: Env, url: URL): Promise<
     ? await env.DB.prepare(`
         SELECT a.*,u.username FROM domain_applications a
         LEFT JOIN users u ON u.id=a.user_id
-        WHERE a.status!='deleted'
+        WHERE (a.deleted_at IS NULL OR a.deleted_at='')
         ORDER BY CASE a.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, a.created_at DESC
         LIMIT ?
       `).bind(limit).all<ApplicationRow>()
     : await env.DB.prepare(`
         SELECT a.*,u.username FROM domain_applications a
         LEFT JOIN users u ON u.id=a.user_id
-        WHERE a.status=? AND a.status!='deleted'
+        WHERE a.status=? AND (a.deleted_at IS NULL OR a.deleted_at='')
         ORDER BY a.created_at DESC
         LIMIT ?
       `).bind(status, limit).all<ApplicationRow>();
@@ -734,13 +739,13 @@ async function adminReviewApplication(request: Request, env: Env, id: string, ac
   const settings = await loadSettings(env);
 
   const app = await env.DB.prepare(`
-    SELECT * FROM domain_applications WHERE id=? AND status!='deleted'
+    SELECT * FROM domain_applications WHERE id=? AND (deleted_at IS NULL OR deleted_at='')
   `).bind(id).first<ApplicationRow>();
   if (!app) throw new HttpError(404, 'NOT_FOUND', '申请不存在');
 
   if (action === 'delete') {
     if (app.status === 'approved' && app.dns_record_id) throw new HttpError(409, 'REVOKE_FIRST', '正常域名请先撤销 DNS 后再删除');
-    await env.DB.prepare(`UPDATE domain_applications SET status='deleted',deleted_at=datetime('now') WHERE id=?`).bind(id).run();
+    await env.DB.prepare(`UPDATE domain_applications SET deleted_at=datetime('now'),updated_at=datetime('now') WHERE id=?`).bind(id).run();
     await audit(env, request, admin.id, 'admin.application_delete', 'domain_application', id);
     return ok({ deleted: true });
   }
@@ -824,7 +829,7 @@ async function adminUsers(request: Request, env: Env): Promise<Response> {
       COUNT(a.id) AS application_count,
       SUM(CASE WHEN a.status='approved' THEN 1 ELSE 0 END) AS approved_count
     FROM users u
-    LEFT JOIN domain_applications a ON a.user_id=u.id AND a.status!='deleted'
+    LEFT JOIN domain_applications a ON a.user_id=u.id AND (a.deleted_at IS NULL OR a.deleted_at='')
     WHERE u.status!='deleted'
     GROUP BY u.id
     ORDER BY u.created_at DESC
@@ -837,7 +842,7 @@ async function adminUsers(request: Request, env: Env): Promise<Response> {
     email: u.email,
     role: u.role,
     status: u.status,
-    domainQuota: Number(u.domain_quota || settings.domain.defaultQuota),
+    domainQuota: Number(u.domain_quota || settings.domain.defaultQuota) >= 9999 ? settings.domain.defaultQuota : Number(u.domain_quota || settings.domain.defaultQuota),
     createdAt: u.created_at,
     lastLoginAt: u.last_login_at,
     applicationCount: Number(u.application_count || 0),
@@ -985,7 +990,7 @@ function serializeUser(user: UserRow) {
     email: user.email,
     role: user.role,
     status: user.status,
-    domainQuota: Number(user.domain_quota || 3),
+    domainQuota: Number(user.domain_quota || 3) >= 9999 ? 3 : Number(user.domain_quota || 3),
     createdAt: user.created_at,
     lastLoginAt: user.last_login_at || null,
   };
@@ -1026,7 +1031,7 @@ function serializeApplication(app: ApplicationRow, settings: AppSettings) {
     remainingDays,
     remainingText: expires ? (remainingDays === 0 ? '今天到期' : `${remainingDays} 天`) : '未设置到期时间',
     canRenew,
-    canDelete: ['rejected', 'revoked'].includes(app.status),
+    canDelete: ['rejected', 'revoked'].includes(app.status) && !app.deleted_at,
   };
 }
 
