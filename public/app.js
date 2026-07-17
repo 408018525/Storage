@@ -733,12 +733,19 @@ async function renderLogin() {
   const turn = state.config.turnstile || {};
   const site = state.config?.site || {};
   app.innerHTML = `${langButton()}
-    <main class="login-modern-wrap">
-      <section class="login-modern-card">
-        <div class="login-lock">🔒</div>
-        <h1>欢迎登录</h1>
-        <p class="login-subtitle">登录到您的 STORAGE 账户</p>
-        <form id="login-form" class="login-modern-form">
+    <main class="auth-wrap login-split-wrap">
+      <section class="auth-brand login-split-brand">
+        <div class="auth-logo">${esc(site.logoText || 'free')}</div>
+        <h1>${esc(site.title || '二级域名注册')}</h1>
+        <p>${esc(site.subtitle || '快速注册并管理您的专属域名')}</p>
+      </section>
+      <section class="auth-card login-compact-card">
+        <div class="login-compact-head">
+          <div class="login-lock">🔒</div>
+          <h2>欢迎登录</h2>
+          <p>登录到您的 STORAGE 账户</p>
+        </div>
+        <form id="login-form" class="login-compact-form">
           <label class="login-field">
             <span>用户名或账户邮箱/手机号</span>
             <div class="login-input-wrap"><span class="login-input-icon">♙</span><input name="identity" placeholder="用户名或账户邮箱/手机号" required autocomplete="username"></div>
