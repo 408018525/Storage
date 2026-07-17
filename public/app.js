@@ -996,8 +996,19 @@ function helpItem(title, body, index) {
 }
 function renderHelpCategory(title, subtitle, items) {
   const rows = items.map((item, idx) => helpItem(item.q, item.a, idx + 1)).join('');
+  const icons = {
+    '常见问题': '◉',
+    'DNS 记录说明': '▣',
+    '域名管理问题': '◇',
+  };
+  const icon = icons[title] || '○';
   return `<details class="help-category">
-    <summary><div><h2>${esc(title)}</h2><p>${esc(subtitle || '')}</p></div><strong>${items.length} 个问题</strong></summary>
+    <summary>
+      <div class="help-category-title">
+        <span class="help-category-icon">${icon}</span>
+        <h2>${esc(title)}</h2>
+      </div>
+    </summary>
     <div class="help-category-body">${rows}</div>
   </details>`;
 }
