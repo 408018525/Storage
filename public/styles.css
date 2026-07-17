@@ -1168,3 +1168,14 @@ th { font-size: 12px; }
     font-size:13px;
   }
 }
+
+
+/* v42: remove login input left icons and keep input alignment clean */
+.login-compact-card .login-input-icon,
+.login-input-icon{
+  display:none !important;
+}
+.login-compact-card .login-input-wrap,
+.login-input-wrap{
+  gap:10px;
+}
