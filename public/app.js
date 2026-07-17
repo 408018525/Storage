@@ -9,6 +9,7 @@ const state = {
   quota: { used: 0, total: 3, remaining: 3 },
   widgetId: null,
   operationLogFilters: { dateMode: 'all', day: '', hour: '', sort: 'desc', type: 'all', actor: 'all' },
+  messageUnread: 0,
 };
 
 
@@ -79,7 +80,7 @@ Object.assign(I18N_EN, {
   '域名':'Domain',
   '时间':'Time',
   '未配置 DNS':'DNS not configured',
-  '管理员备注，可留空；填写后用户域名界面会显示':'Admin note, optional. If filled, it will be shown to the user.',
+  '管理员留言，可留空；填写后会发送到用户消息中心':'Admin note, optional. If filled, it will be shown to the user.',
   '确认禁用该域名？禁用后将删除该域名所有 DNS 解析，用户不能继续管理该域名。':'Disable this domain? All DNS records will be removed and the user can no longer manage it.',
   '操作成功':'Operation successful',
   '确认续期一年？':'Renew for one year?',
@@ -620,7 +621,7 @@ function applyTheme() {
 
 
 Object.assign(I18N_EN, {
-  '消息中心设置':'Message Center Settings','帮助分类':'Help Categories','新增问题':'Add Question','编辑问题':'Edit Question','保存全部':'Save All','添加到分类':'Add to Category','问题标题':'Question Title','问题答案':'Answer','分类标题':'Category Title','分类说明':'Category Description','恢复默认帮助内容':'Restore Default Help Content','帮助内容已保存':'Help content saved','帮助内容已恢复默认':'Help content restored','消息中心':'Message Center','系统消息':'System Messages','我的消息':'My Messages','暂无消息':'No messages yet','全部消息':'All Messages','未读':'Unread','已读':'Read','标为已读':'Mark as Read','发送消息':'Send Message','消息标题':'Message Title','消息内容':'Message Content','接收对象':'Recipients','全部用户':'All Users','指定用户':'Specific User','按角色':'By Role','普通用户':'Users','消息类型':'Message Type','普通通知':'Info','成功提示':'Success','警告提醒':'Warning','重要警告':'Important','立即发送':'Send Now','保存草稿':'Save Draft','保存为模板':'Save as Template','草稿':'Draft','模板':'Template','已发送':'Sent','发送时间':'Sent At','创建时间':'Created At','发送人':'Sender','目标':'Target','套用模板':'Use Template','发送草稿':'Send Draft','编辑草稿':'Edit Draft','删除消息':'Delete Message','请输入消息标题':'Enter message title','请输入消息内容':'Enter message content','消息已发送':'Message sent','草稿已保存':'Draft saved','模板已保存':'Template saved','消息已删除':'Message deleted','消息已标为已读':'Message marked as read','管理员可以在这里发送系统通知、保存草稿和维护常用模板。':'Admins can send system notices, save drafts, and manage templates here.','用户可以在这里查看系统通知、管理员留言、域名处理结果和维护提醒。':'View system notices, admin messages, domain updates, and maintenance reminders here.'
+  '消息中心设置':'Message Center Settings','帮助分类':'Help Categories','新增问题':'Add Question','编辑问题':'Edit Question','保存全部':'Save All','添加到分类':'Add to Category','问题标题':'Question Title','问题答案':'Answer','分类标题':'Category Title','分类说明':'Category Description','恢复默认帮助内容':'Restore Default Help Content','帮助内容已保存':'Help content saved','帮助内容已恢复默认':'Help content restored','消息中心':'Message Center','系统消息':'System Messages','我的消息':'My Messages','暂无消息':'No messages yet','全部消息':'All Messages','未读':'Unread','已读':'Read','标为已读':'Mark as Read','发送消息':'Send Message','消息标题':'Message Title','消息内容':'Message Content','接收对象':'Recipients','全部用户':'All Users','指定用户':'Specific User','按角色':'By Role','普通用户':'Users','消息类型':'Message Type','普通通知':'Info','成功提示':'Success','警告提醒':'Warning','重要警告':'Important','立即发送':'Send Now','保存草稿':'Save Draft','保存为模板':'Save as Template','草稿':'Draft','模板':'Template','已发送':'Sent','发送时间':'Sent At','创建时间':'Created At','发送人':'Sender','目标':'Target','套用模板':'Use Template','发送草稿':'Send Draft','编辑草稿':'Edit Draft','删除消息':'Delete Message','请输入消息标题':'Enter message title','请输入消息内容':'Enter message content','消息已发送':'Message sent','草稿已保存':'Draft saved','模板已保存':'Template saved','消息已删除':'Message deleted','消息已标为已读':'Message marked as read','管理员可以在这里发送系统通知、保存草稿和维护常用模板。':'Admins can send system notices, save drafts, and manage templates here.','用户可以在这里查看系统通知、管理员消息、域名处理结果和维护提醒。':'View system notices, admin messages, domain updates, and maintenance reminders here.','批量已读':'Mark Selected Read','全部已读':'Mark All Read','请选择要标记的消息':'Select messages to mark as read','已读用户':'Read Users','用户已读':'User Read','管理员已读':'Admin Read','未读消息':'Unread Messages'
 });
 
 Object.assign(I18N_EN, {
@@ -828,7 +829,34 @@ async function renderRegister() {
 }
 
 function nav(hash, icon, text) {
-  return `<a class="nav ${location.hash === hash ? 'active' : ''}" href="${hash}"><span>${icon}</span>${esc(text)}</a>`;
+  const isMessage = hash === '#/messages';
+  const count = Number(state.messageUnread || 0);
+  const badge = isMessage && count > 0 ? `<b class="nav-badge">${count > 9 ? '9+' : count}</b>` : '';
+  return `<a class="nav ${isMessage ? 'nav-message' : ''} ${location.hash === hash ? 'active' : ''}" href="${hash}"><span class="nav-icon">${icon}</span><span class="nav-label">${esc(text)}</span>${badge}</a>`;
+}
+
+function updateMessageBadgeDom() {
+  const count = Number(state.messageUnread || 0);
+  document.querySelectorAll('.nav-message').forEach(link => {
+    link.querySelector('.nav-badge')?.remove();
+    if (count > 0) link.insertAdjacentHTML('beforeend', `<b class="nav-badge">${count > 9 ? '9+' : count}</b>`);
+  });
+}
+
+let messageBadgeLoading = false;
+async function refreshMessageBadge() {
+  if (!state.me || messageBadgeLoading) return;
+  messageBadgeLoading = true;
+  try {
+    const res = await api('/api/messages');
+    state.messageUnread = Number(res.unread || 0);
+    updateMessageBadgeDom();
+  } catch (_) {
+    state.messageUnread = 0;
+    updateMessageBadgeDom();
+  } finally {
+    messageBadgeLoading = false;
+  }
 }
 function shell(title, content) {
   const site = state.config.site || {};
@@ -857,6 +885,8 @@ function shell(title, content) {
       <section class="content">${content}</section>
     </main>
   </div>`;
+  updateMessageBadgeDom();
+  refreshMessageBadge();
   document.querySelector('#logout')?.addEventListener('click', async () => {
     try { await api('/api/auth/logout', { method:'POST', body:{} }); } catch {}
     state.me = null;
@@ -996,7 +1026,7 @@ function showRegisterGuideModal() {
       <div class="help-accordion">
         <details open><summary>申请流程说明</summary><div class="help-detail"><p>1. 先在注册页面选择根域名并填写前缀，例如 <b>blog</b>，系统会生成 <b>blog.flore.top</b>。</p><p>2. 提交后状态为“待审核”，此时不能配置 DNS，也不会开始计算有效期。</p><p>3. 管理员审核通过后，状态变为“正常”，有效期从批准当天开始计算。</p><p>4. 审核通过后进入“域名管理”，点击“管理域名”，再添加 DNS 解析记录。</p></div></details>
         <details><summary>DNS 配置说明</summary><div class="help-detail"><p>A 记录用于指向 IPv4 地址，例如 <b>1.2.3.4</b>。</p><p>AAAA 记录用于指向 IPv6 地址。</p><p>CNAME 记录用于指向另一个域名，例如 Pages、Vercel、动态域名服务地址。</p><p>TXT 记录常用于验证所有权、邮件验证或第三方平台校验。</p><p>MX 记录用于邮箱服务，通常需要填写优先级。</p><p>A / AAAA / CNAME 可以选择是否开启代理；TXT / MX 必须保持“仅 DNS”。</p></div></details>
-        <details><summary>删除与续期说明</summary><div class="help-detail"><p>正常域名申请删除后需要管理员审核。12 小时内可以撤销删除申请。</p><p>无效域名或已拒绝域名可以按规则直接删除。</p><p>续期按钮只会在进入续期窗口后显示。默认最后 60 天可续期，具体以管理员设置为准。</p><p>如果域名被管理员禁用，用户界面会显示管理员留言，DNS 记录会被移除。</p></div></details>
+        <details><summary>删除与续期说明</summary><div class="help-detail"><p>正常域名申请删除后需要管理员审核。12 小时内可以撤销删除申请。</p><p>无效域名或已拒绝域名可以按规则直接删除。</p><p>续期按钮只会在进入续期窗口后显示。默认最后 60 天可续期，具体以管理员设置为准。</p><p>如果域名被管理员禁用，通知会进入消息中心，DNS 记录会被移除。</p></div></details>
       </div>
     </div>
     <div class="modal-actions"><button class="btn primary" data-close-modal type="button">关闭</button></div>
@@ -1474,13 +1504,25 @@ async function renderOperationLogs() {
   }
 }
 
+function messageReadUsersText(m) {
+  const readers = Array.isArray(m.readUsers) ? m.readUsers : [];
+  if (!readers.length && Number(m.readCount || 0) <= 0) return '暂无已读';
+  if (!readers.length) return `已读 ${Number(m.readCount || 0)} 人`;
+  const names = readers.slice(0, 8).map(x => x.username || x.userId).join('、');
+  const more = readers.length > 8 ? ` 等 ${readers.length} 人` : '';
+  return `${names}${more}`;
+}
+
 function messageListHtml(messages, admin = false) {
   if (!messages.length) return '<div class="empty">暂无消息</div>';
-  return messages.map(m => `<article class="message-card ${m.isRead ? 'read' : 'unread'} message-${esc(m.level || 'info')}">
+  const readLabel = state.me?.role === 'admin' ? '管理员已读' : '用户已读';
+  return messages.map(m => `<article class="message-card ${m.isRead ? 'read' : 'unread'} message-${esc(m.level || 'info')}" data-message-id="${attr(m.id)}">
+    <div class="message-select">${!admin ? `<input type="checkbox" class="message-check" value="${attr(m.id)}" ${m.isRead ? 'data-read="1"' : ''}>` : ''}</div>
     <div class="message-main">
-      <div class="message-head"><h3>${esc(m.title)}</h3>${messageLevelBadge(m.level)}${admin ? `<span class="status-pill status-${esc(m.status)}">${esc(messageStatusBadgeText(m.status))}</span>` : (m.isRead ? '<span class="message-read">已读</span>' : '<span class="message-unread">未读</span>')}</div>
+      <div class="message-head"><h3>${esc(m.title)}</h3>${messageLevelBadge(m.level)}${admin ? `<span class="status-pill status-${esc(m.status)}">${esc(messageStatusBadgeText(m.status))}</span>` : (m.isRead ? `<span class="message-read">${readLabel}</span>` : '<span class="message-unread">未读</span>')}</div>
       <p>${esc(m.body).replace(/\n/g,'<br>')}</p>
       <div class="message-meta"><span>发送人：${esc(m.senderUsername || '系统管理员')}</span>${admin ? `<span>目标：${esc(m.targetLabel || '')}</span>` : ''}<span>时间：${fmtDate(m.sentAt || m.createdAt, true)}</span></div>
+      ${admin && m.status === 'sent' ? `<div class="message-readers"><b>已读用户：</b>${esc(messageReadUsersText(m))}</div>` : ''}
     </div>
     <div class="message-actions">
       ${!admin && !m.isRead ? `<button class="btn small soft" data-read-message="${attr(m.id)}">标为已读</button>` : ''}
@@ -1503,18 +1545,35 @@ async function renderMessageCenter(preset = null) {
       users = userRes.users || [];
     }
     const inbox = mine.messages || [];
+    state.messageUnread = Number(mine.unread || 0);
+    updateMessageBadgeDom();
     const templates = adminMessages.filter(m => m.status === 'template');
     const drafts = adminMessages.filter(m => m.status === 'draft');
     const sent = adminMessages.filter(m => m.status === 'sent');
     shell('消息中心', `
-      <section class="message-hero card"><div><h2>消息中心</h2><p>${isAdmin ? '管理员可以在这里发送系统通知、保存草稿和维护常用模板。' : '用户可以在这里查看系统通知、管理员留言、域名处理结果和维护提醒。'}</p></div><div class="message-count"><strong>${mine.unread || 0}</strong><span>未读</span></div></section>
-      <section class="card"><div class="section-head"><div><h2>我的消息</h2><p>系统消息、管理员通知和域名处理结果都会显示在这里。</p></div></div><div class="message-list">${messageListHtml(inbox, false)}</div></section>
+      <section class="message-hero card"><div><h2>消息中心</h2><p>${isAdmin ? '管理员可以在这里发送系统通知、保存草稿和维护常用模板。' : '用户可以在这里查看系统通知、管理员消息、域名处理结果和维护提醒。'}</p></div><div class="message-count"><strong>${mine.unread || 0}</strong><span>未读</span></div></section>
+      <section class="card"><div class="section-head"><div><h2>我的消息</h2><p>系统消息、管理员通知和域名处理结果都会显示在这里。</p></div><div class="message-toolbar"><button class="btn small soft" id="mark-selected-read">批量已读</button><button class="btn small secondary" id="mark-all-read">全部已读</button></div></div><div class="message-list">${messageListHtml(inbox, false)}</div></section>
       ${isAdmin ? `<section class="card"><div class="section-head"><div><h2>发送消息</h2><p>可以发送给全部用户、普通用户、管理员或指定用户。</p></div></div>${messageComposeForm(users, preset || {})}</section>
       <section class="card"><div class="section-head"><div><h2>草稿信息</h2><p>未发送的消息可以继续编辑或直接发送。</p></div></div><div class="message-list">${messageListHtml(drafts, true)}</div></section>
       <section class="card"><div class="section-head"><div><h2>消息模板</h2><p>保存常用通知，下次可以直接套用。</p></div></div><div class="message-list">${messageListHtml(templates, true)}</div></section>
       <section class="card"><div class="section-head"><div><h2>已发送消息</h2><p>查看已发送的系统通知和用户阅读情况。</p></div></div><div class="message-list">${messageListHtml(sent, true)}</div></section>` : ''}
     `);
-    document.querySelectorAll('[data-read-message]').forEach(btn => btn.addEventListener('click', async () => { await api(`/api/messages/${encodeURIComponent(btn.dataset.readMessage)}/read`, { method:'POST', body:{} }); toast('消息已标为已读','success'); await renderMessageCenter(); }));
+    async function markMessagesRead(ids) {
+      const cleanIds = Array.from(new Set((ids || []).filter(Boolean)));
+      if (!cleanIds.length) { toast('请选择要标记的消息', 'error'); return; }
+      await api('/api/messages/read-batch', { method:'POST', body:{ ids: cleanIds } });
+      toast('消息已标为已读','success');
+      await renderMessageCenter();
+    }
+    document.querySelectorAll('[data-read-message]').forEach(btn => btn.addEventListener('click', async () => { await markMessagesRead([btn.dataset.readMessage]); }));
+    document.querySelector('#mark-selected-read')?.addEventListener('click', async () => {
+      const ids = [...document.querySelectorAll('.message-check:checked')].map(x => x.value);
+      await markMessagesRead(ids);
+    });
+    document.querySelector('#mark-all-read')?.addEventListener('click', async () => {
+      const ids = inbox.filter(m => !m.isRead).map(m => m.id);
+      await markMessagesRead(ids);
+    });
     if (isAdmin) {
       bindMessageCompose(users, preset);
       document.querySelectorAll('[data-send-message]').forEach(btn => btn.addEventListener('click', async () => { if (!confirm('确认发送这条消息？')) return; await api(`/api/admin/messages/${encodeURIComponent(btn.dataset.sendMessage)}/send`, { method:'POST', body:{} }); toast('消息已发送','success'); await renderMessageCenter(); }));
@@ -1563,7 +1622,6 @@ function domainCard(a, options = {}) {
       <div><span>DNS</span><strong class="mono">${esc(dns)}</strong></div>
     </div>
     ${a.errorMessage ? `<p class="error-line">${esc(a.errorMessage)}</p>` : ''}
-    ${a.reviewNote ? `<p class="note-line"><b>管理员留言：</b>${esc(a.reviewNote)}</p>` : ''}
     ${a.deleteRequested ? `<p class="note-line"><b>删除申请：</b>${a.canCancelDeleteRequest ? '12 小时内可以撤销删除申请。' : '12 小时撤销窗口已过，请等待管理员审核。'}</p>` : ''}
     ${options.readonly ? '' : `<div class="card-actions">
       <button class="btn soft" data-manage="${attr(a.id)}">管理域名</button>
@@ -1982,7 +2040,7 @@ async function renderAdminApplications() {
         ? '确认禁用该域名？禁用后将删除该域名所有 DNS 解析，用户不能继续管理该域名。'
         : `确认${label}该域名？`;
       if (!confirm(translateTextValue(confirmMessage))) return;
-      const note = (action === 'delete' || action === 'approve-delete') ? '' : (prompt(translateTextValue('管理员备注，可留空；填写后用户域名界面会显示'), '') ?? '');
+      const note = (action === 'delete' || action === 'approve-delete') ? '' : (prompt(translateTextValue('管理员留言，可留空；填写后会发送到用户消息中心'), '') ?? '');
       btn.disabled = true;
       try {
         await api(`/api/admin/applications/${btn.dataset.id}/${action}`, { method:'POST', body:{ note } });
