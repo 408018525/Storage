@@ -1737,9 +1737,10 @@ async function audit(env: Env, request: Request, actorUserId: string | null, act
 }
 
 function normalizeUsername(raw: unknown): string {
-  const value = String(raw || '').trim().toLowerCase();
-  if (!/^[a-z0-9_][a-z0-9_-]{2,31}$/.test(value)) {
-    throw new HttpError(400, 'INVALID_USERNAME', '用户名需为 3-32 位字母、数字、下划线或连字符');
+  // v26：账号不再限制长度格式、大小写或字符类型；只要求不能为空。
+  const value = String(raw || '').trim();
+  if (!value) {
+    throw new HttpError(400, 'INVALID_USERNAME', '账号不能为空');
   }
   return value;
 }
@@ -1752,9 +1753,10 @@ function normalizeEmail(raw: unknown): string | null {
 }
 
 function validatePassword(raw: unknown): string {
+  // v26：密码只要求至少 8 位，不再要求大小写、字母或数字组合。
   const value = String(raw || '');
-  if (value.length < 10 || !/[a-zA-Z]/.test(value) || !/\d/.test(value)) {
-    throw new HttpError(400, 'INVALID_PASSWORD', '密码至少 10 位，并包含字母和数字');
+  if (value.length < 8) {
+    throw new HttpError(400, 'INVALID_PASSWORD', '密码至少 8 位');
   }
   return value;
 }
