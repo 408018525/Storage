@@ -227,6 +227,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (method === 'GET' && pathname === '/api/admin/overview') return adminOverview(request, env);
   if (method === 'GET' && pathname === '/api/admin/applications') return adminApplications(request, env, url);
   if (method === 'GET' && pathname === '/api/admin/users') return adminUsers(request, env);
+  if (method === 'POST' && pathname === '/api/admin/users') return adminCreateUser(request, env);
   if (method === 'GET' && pathname === '/api/admin/settings') return adminSettings(request, env);
 
   match = pathname.match(/^\/api\/admin\/settings\/(site|registration|domain)$/);
@@ -1245,6 +1246,42 @@ async function adminUsers(request: Request, env: Env): Promise<Response> {
     applicationCount: Number(u.application_count || 0),
     approvedCount: Number(u.approved_count || 0),
   })) });
+}
+
+async function adminCreateUser(request: Request, env: Env): Promise<Response> {
+  const admin = await requireAdmin(env, request);
+  const body = await readJson<Record<string, unknown>>(request);
+  const settings = await loadSettings(env);
+
+  if (!asBoolean(body.humanCheck, false)) {
+    throw new HttpError(400, 'HUMAN_CHECK_REQUIRED', '请完成人机确认后再创建用户');
+  }
+
+  const username = normalizeUsername(body.username);
+  const email = normalizeEmail(body.email);
+  const password = validatePassword(body.password);
+  const role: Role = body.role === 'admin' ? 'admin' : 'user';
+  const status = ['active', 'disabled'].includes(String(body.status)) ? String(body.status) as UserStatus : 'active';
+  const quota = clamp(Number(body.domainQuota || settings.domain.defaultQuota), 0, 9999);
+
+  const duplicate = await env.DB.prepare(`
+    SELECT id FROM users
+    WHERE username=? COLLATE NOCASE OR (? IS NOT NULL AND email=? COLLATE NOCASE)
+    LIMIT 1
+  `).bind(username, email, email).first<{ id: string }>();
+  if (duplicate) throw new HttpError(409, 'USER_EXISTS', '用户名或邮箱已被使用');
+
+  const { hash, salt } = await hashPassword(password);
+  const id = crypto.randomUUID();
+
+  await env.DB.prepare(`
+    INSERT INTO users (id, username, email, password_hash, password_salt, role, status, domain_quota, permissions_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, username, email, hash, salt, role, status, quota, JSON.stringify({ canApply: true })).run();
+
+  await audit(env, request, admin.id, 'admin.user_create', 'user', id, { username, email, role, status, quota });
+  const user = await env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(id).first<UserRow>();
+  return ok({ user: serializeUser(user!) });
 }
 
 async function adminUpdateUser(request: Request, env: Env, id: string): Promise<Response> {
