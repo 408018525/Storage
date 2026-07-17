@@ -1017,7 +1017,6 @@ function renderHelpCenter() {
   shell('帮助中心', `
     <section class="help-hero card"><div><h2>帮助中心</h2><p>查看使用提示与支持入口</p></div></section>
     <section class="help-search-row"><input id="help-search" class="help-search" placeholder="搜索关键词，例如：DNS 生效、解析报错"><button class="btn primary" id="help-search-btn">搜索/问答</button></section>
-    <section class="card help-card"><h2>域名知识小贴士</h2><div class="help-tabs"><a href="#faq">常见问题</a><a href="#dns-guide">DNS 记录说明</a><a href="#domain-manage">域名管理问题</a></div></section>
     <section id="faq" class="card help-card"><h2>常见问题</h2><div class="help-accordion">${faq}</div></section>
     <section id="dns-guide" class="card help-card"><h2>DNS 记录说明</h2><div class="help-accordion">${dns}</div></section>
     <section id="domain-manage" class="card help-card"><h2>域名管理问题</h2><div class="help-accordion">${manage}</div></section>
