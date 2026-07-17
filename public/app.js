@@ -681,6 +681,7 @@ async function renderAccount() {
     <div class="grid two">
       <section class="card"><h2>账户信息</h2><div class="info-list"><span>用户名</span><strong>${esc(state.me.username)}</strong><span>角色</span><strong>${state.me.role === 'admin' ? '管理员' : '普通用户'}</strong><span>域名额度</span><strong>${esc(state.me.domainQuota || state.quota.total || 3)}</strong></div></section>
       <section class="card"><h2>修改密码</h2><form id="password-form" class="form-grid"><label class="field wide"><span>当前密码</span><input name="currentPassword" type="password" required></label><label class="field wide"><span>新密码</span><input name="newPassword" type="password" required minlength="10"></label><button class="btn primary wide" type="submit">修改密码</button></form></section>
+      <section class="card danger-zone account-delete-card"><h2>注销账号</h2><p>注销后账号将无法登录。为避免域名遗留，账户下仍有正常域名时需要先申请删除域名并等待管理员批准。</p><button class="btn danger" id="delete-account" type="button">注销账号</button></section>
     </div>`);
   document.querySelector('#password-form').addEventListener('submit', async e => {
     e.preventDefault();
@@ -689,6 +690,34 @@ async function renderAccount() {
     try {
       await api('/api/auth/change-password', { method:'POST', body:Object.fromEntries(new FormData(e.currentTarget)) });
       toast('密码已修改，请重新登录', 'success');
+      state.me = null;
+      go('#/login');
+    } catch (error) {
+      toast(error.message, 'error');
+      btn.disabled = false;
+    }
+  });
+  document.querySelector('#delete-account')?.addEventListener('click', showDeleteAccountModal);
+}
+
+function showDeleteAccountModal() {
+  openModal('注销账号', '此操作不可直接恢复，请谨慎确认。', `
+    <form id="delete-account-form" class="modal-form">
+      <div class="delete-box"><p>当前账号：</p><strong>${esc(state.me.username)}</strong><p class="danger-text">注销后将退出登录，账号状态变为已删除。</p></div>
+      <label class="field wide"><span>当前密码</span><input name="currentPassword" type="password" required></label>
+      <label class="field wide"><span>输入用户名确认</span><input name="confirmUsername" placeholder="${attr(state.me.username)}" required></label>
+      <div class="modal-actions"><button type="button" class="btn secondary" data-cancel>取消</button><button class="btn danger" type="submit">确认注销</button></div>
+    </form>
+  `, 'wide');
+  document.querySelector('[data-cancel]').addEventListener('click', closeModal);
+  document.querySelector('#delete-account-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = e.submitter;
+    btn.disabled = true;
+    try {
+      await api('/api/account/delete', { method:'POST', body:Object.fromEntries(new FormData(e.currentTarget)) });
+      closeModal();
+      toast('账号已注销', 'success');
       state.me = null;
       go('#/login');
     } catch (error) {
