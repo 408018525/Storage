@@ -133,6 +133,20 @@ interface MessageRow {
   read_at?: string | null;
 }
 
+
+interface HelpItemSetting {
+  id?: string;
+  q: string;
+  a: string;
+}
+
+interface HelpCategorySetting {
+  key: string;
+  title: string;
+  subtitle?: string;
+  items: HelpItemSetting[];
+}
+
 interface AppSettings {
   site: {
     title: string;
@@ -152,6 +166,9 @@ interface AppSettings {
     renewWindowDays: number;
     allowUserDeleteInvalid: boolean;
     allowDnsEditAfterApproved: boolean;
+  };
+  help: {
+    categories: HelpCategorySetting[];
   };
   dns: {
     envManaged: boolean;
@@ -261,6 +278,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (method === 'GET' && pathname === '/api/admin/messages') return adminListMessages(request, env, url);
   if (method === 'POST' && pathname === '/api/admin/messages') return adminCreateMessage(request, env);
   if (method === 'GET' && pathname === '/api/admin/settings') return adminSettings(request, env);
+  if (method === 'GET' && pathname === '/api/admin/help-settings') return adminHelpSettings(request, env);
+  if (method === 'PUT' && pathname === '/api/admin/help-settings') return adminUpdateHelpSettings(request, env);
 
   match = pathname.match(/^\/api\/admin\/messages\/([^/]+)$/);
   if (match && method === 'PATCH') return adminUpdateMessage(request, env, decodeURIComponent(match[1]));
@@ -487,6 +506,7 @@ async function publicConfigHandler(env: Env): Promise<Response> {
       site: settings.site,
       registration: { ...settings.registration, enabled: true },
       domain: settings.domain,
+      help: settings.help,
       suffixes: settings.dns.suffixes
         .filter(x => x.enabled)
         .map(x => ({
@@ -1795,6 +1815,59 @@ async function adminUpdateUser(request: Request, env: Env, id: string): Promise<
   return ok({ updated: true });
 }
 
+
+async function adminHelpSettings(request: Request, env: Env): Promise<Response> {
+  await requireAdmin(env, request);
+  const settings = await loadSettings(env);
+  return ok({ help: settings.help });
+}
+
+async function adminUpdateHelpSettings(request: Request, env: Env): Promise<Response> {
+  const admin = await requireAdmin(env, request);
+  const body = await readJson<Record<string, unknown>>(request, 512 * 1024);
+  const settings = await loadSettings(env);
+  settings.help = { categories: sanitizeHelpCategories((body as any).categories) };
+  await env.APP_KV.put(SETTINGS_KEY, JSON.stringify(settings));
+  await audit(env, request, admin.id, 'admin.settings_help', 'setting', 'help');
+  return ok({ help: settings.help });
+}
+
+function defaultHelpSettings(): { categories: HelpCategorySetting[] } {
+  return { categories: [
+    { key:'faq', title:'常见问题', subtitle:'账号、注册、审核、登录、额度、语言、消息等常见问题', items: [] },
+    { key:'dns', title:'DNS 记录说明', subtitle:'A / AAAA / CNAME / TXT / MX、代理、TTL、生效时间、第三方平台配置', items: [] },
+    { key:'domain', title:'域名管理问题', subtitle:'解析管理、删除撤销、续期、禁用、管理员处理、手机端操作等问题', items: [] },
+  ] };
+}
+
+function sanitizeHelpCategories(value: unknown): HelpCategorySetting[] {
+  const defaults = defaultHelpSettings().categories;
+  const raw = Array.isArray(value) ? value : [];
+  return defaults.map((def, index) => {
+    const found = raw.find((x: any) => x && (x.key === def.key || x.title === def.title)) || raw[index] || def;
+    const itemsRaw = Array.isArray((found as any).items) ? (found as any).items : [];
+    const items = itemsRaw.slice(0, 200).map((item: any, itemIndex: number) => ({
+      id: cleanText(item?.id || `${def.key}-${itemIndex + 1}`, 80) || `${def.key}-${itemIndex + 1}`,
+      q: cleanText(item?.q || item?.question || '', 200),
+      a: cleanHtmlText(item?.a || item?.answer || '', 8000),
+    })).filter((item: HelpItemSetting) => item.q);
+    return {
+      key: cleanText((found as any).key || def.key, 30) || def.key,
+      title: cleanText((found as any).title || def.title, 80) || def.title,
+      subtitle: cleanText((found as any).subtitle || def.subtitle || '', 180),
+      items,
+    };
+  });
+}
+
+function cleanHtmlText(value: unknown, max = 8000): string {
+  const raw = String(value ?? '').slice(0, max);
+  return raw
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/on\w+\s*=\s*(['"]).*?\1/gi, '')
+    .trim();
+}
+
 async function adminSettings(request: Request, env: Env): Promise<Response> {
   await requireAdmin(env, request);
   return ok({ settings: await loadSettings(env) });
@@ -1850,6 +1923,7 @@ async function loadSettings(env: Env): Promise<AppSettings> {
     site: { ...defaults.site, ...(saved.site || {}) },
     registration: { ...defaults.registration, ...(saved.registration || {}) },
     domain: { ...defaults.domain, ...(saved.domain || {}) },
+    help: { categories: Array.isArray((saved as any).help?.categories) ? sanitizeHelpCategories((saved as any).help.categories) : defaults.help.categories },
     dns: defaults.dns,
   };
 }
@@ -1889,6 +1963,7 @@ function defaultSettings(env: Env): AppSettings {
       allowUserDeleteInvalid: true,
       allowDnsEditAfterApproved: true,
     },
+    help: defaultHelpSettings(),
     dns: {
       envManaged: true,
       reservedPrefixes: reserved,
