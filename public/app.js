@@ -25,6 +25,92 @@ function suffixList() {
   return state.config?.suffixes || state.config?.dns?.suffixes || [];
 }
 
+
+const I18N_EN = {
+  '初始化管理员':'Bootstrap Admin','首次部署需要创建管理员账户。':'Create the first admin account for this deployment.','初始化令牌':'Setup Token','管理员用户名':'Admin Username','邮箱':'Email','管理员密码':'Admin Password','至少 10 位，并包含字母和数字。':'At least 10 characters, including letters and numbers.','创建管理员':'Create Admin',
+  '登录':'Login','进入域名注册与管理中心。':'Access the domain registration and management center.','用户名或邮箱':'Username or Email','密码':'Password','30 天内保持登录':'Keep me signed in for 30 days','没有账户？':'No account?','注册':'Register','创建账户':'Create Account','注册后默认拥有 3 个域名额度。':'New users get 3 domain slots by default.','用户名':'Username','已有账户？':'Already have an account?','登录成功':'Login successful','注册成功，请使用刚才的账号密码登录':'Registration successful. Please log in.','注册成功，请等待管理员启用账户':'Registration successful. Please wait for admin activation.',
+  '域名注册':'Domain Registration','域名管理':'Domain Management','账户设置':'Account Settings','管理概览':'Dashboard','域名审核':'Domain Review','用户管理':'Users','管理员设置':'Admin Settings','退出登录':'Logout','管理员':'Admin','普通用户':'User','启用':'Active','禁用':'Disabled','正常':'Active','待审核':'Pending','处理中':'Processing','已拒绝':'Rejected','已撤销':'Revoked','已删除':'Deleted','撤销中':'Revoking','待删除审核':'Delete Pending',
+  '请勿申请违法、侵权、仿冒或误导性域名。':'Do not apply for illegal, infringing, impersonating, or misleading domains.','已注册':'Registered','剩余':'Remaining','＋ 注册新域名':'+ Register Domain','申请时只需要填写前缀和根域名。管理员批准后，再在“域名管理”中添加或管理多条 DNS 解析记录。':'Enter only the prefix and root domain. After admin approval, manage DNS records in Domain Management.','填写前缀':'Enter Prefix','提交审核':'Submit Review','管理员批准':'Admin Approval','配置 DNS':'Configure DNS','最近域名':'Recent Domains','全部域名':'All Domains','暂无域名，点击右上方注册新域名。':'No domains yet. Click Register Domain to start.','选择根域名':'Select Root Domain','请选择根域名':'Select root domain','域名前缀':'Domain Prefix','注册新域名':'Register New Domain','选择根域名并输入前缀，快速注册一个专属您的免费域名':'Choose a root domain and enter a prefix.','取消':'Cancel','提交申请':'Submit','审核通过后可配置':'Available after approval','审核通过后可配置 DNS':'DNS available after approval','注册时间':'Created','到期时间':'Expires','剩余时间':'Remaining','DNS':'DNS','管理域名':'Manage Domain','续期':'Renew','申请删除域名':'Request Deletion','删除待审核':'Delete Pending','删除无效域名':'Delete Invalid Domain','未配置':'Not configured','我的域名':'My Domains','到期时间、剩余时间、DNS 状态都在这里查看。':'View expiration, remaining time, and DNS status here.','暂无域名。':'No domains yet.',
+  '概览':'Overview','DNS 解析':'DNS Records','续期和详情':'Renewal & Details','添加解析':'+ Add Record','审核通过后可配置 DNS':'DNS available after approval','域名审核通过后才能添加解析。':'DNS records can be added only after approval.','暂无 DNS 解析，请点击“添加解析”。':'No DNS records yet. Click Add Record.','记录类型':'Record Type','主机记录':'Host','目标地址':'Target','代理状态':'Proxy Status','仅 DNS':'DNS Only','开启代理':'Proxied','保存':'Save','编辑':'Edit','删除':'Delete','状态':'Status','操作':'Actions','备注':'Note','用户':'User','批准':'Approve','拒绝':'Reject','撤销':'Revoke','禁用':'Disable','批准删除':'Approve Delete','拒绝删除':'Reject Delete','管理员留言':'Admin Note','禁用后将删除该域名所有 DNS 解析，用户不能继续管理该域名。':'Disabling will remove all DNS records. The user can no longer manage this domain.',
+  '保存设置':'Save Settings','界面设置':'Appearance','注册设置':'Registration','域名设置':'Domain Settings','DNS配置':'DNS Config','开放用户注册':'Allow public registration','注册后自动启用账户':'Auto-activate new users','默认额度':'Default quota','默认有效期':'Default validity','续期窗口':'Renewal window','生效后允许用户修改 DNS':'Allow DNS edits after approval','添加用户':'Add User','账号':'Account','初始密码':'Initial Password','角色':'Role','域名额度':'Domain Quota','创建用户':'Create User','注销账号':'Cancel Account','当前密码':'Current Password','确认用户名':'Confirm Username','确认注销':'Confirm Cancellation',
+  '语言':'Language','中文':'Chinese','English':'English'
+};
+
+
+I18N_EN['域名列表'] = 'Domain List';
+I18N_EN['这里只显示域名状态，不显示编辑操作；进入“域名管理”后再管理解析。'] = 'This page only shows domain status. Go to Domain Management to edit DNS records.';
+I18N_EN['EN'] = 'EN';
+I18N_EN['中文'] = '中文';
+
+function lang() { return localStorage.getItem('ui_lang') || 'zh'; }
+function setLang(value) {
+  localStorage.setItem('ui_lang', value === 'en' ? 'en' : 'zh');
+  renderRoute();
+}
+function tr(text) {
+  if (lang() !== 'en') return text;
+  return I18N_EN[text] || text;
+}
+function langButton() {
+  return `<button class="btn ghost lang-toggle" data-lang-toggle type="button">${lang() === 'en' ? '中文' : 'EN'}</button>`;
+}
+function translateTextValue(value) {
+  if (lang() !== 'en') return value;
+  const raw = String(value || '');
+  const trimmed = raw.trim();
+  if (!trimmed) return value;
+  let translated = I18N_EN[trimmed];
+  if (!translated) {
+    translated = trimmed
+      .replace(/^默认有效期\s*(\d+)\s*天，最后\s*(\d+)\s*天可申请续期。$/, 'Default validity: $1 days. Renewal opens in the last $2 days.')
+      .replace(/^2-36 位，仅支持字母、数字和连字符 -$/, '2-36 characters. Letters, numbers, and hyphens only.')
+      .replace(/^管理员审核通过后，您才可以设置 DNS 解析$/, 'DNS records are available only after admin approval.')
+      .replace(/^管理员审核通过后，进入“域名管理”点击“管理域名”，再添加 DNS 解析。$/, 'After admin approval, go to Domain Management → Manage Domain to add DNS records.')
+      .replace(/^当前域名还未通过审核，暂时不能设置 DNS 解析。$/, 'This domain is not approved yet. DNS records are temporarily unavailable.')
+      .replace(/^用户可自由添加解析记录，支持三级\/多级子域名。.*$/, 'Users can freely add DNS records, including third-level and multi-level subdomains.')
+      .replace(/^申请时只需要填写前缀和根域名。.*$/, 'Enter only the prefix and root domain. Configure DNS after approval.');
+    if (translated === trimmed) translated = null;
+  }
+  if (!translated) return value;
+  return raw.replace(trimmed, translated);
+}
+function applyI18n(root = app) {
+  document.documentElement.lang = lang() === 'en' ? 'en' : 'zh-CN';
+  const site = state.config?.site || {};
+  document.title = lang() === 'en' ? 'Domain Registration Center' : (site.title || '免费二级域名注册中心');
+  if (lang() !== 'en' || !root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || ['SCRIPT','STYLE','CODE','TEXTAREA'].includes(parent.tagName)) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(node => { node.nodeValue = translateTextValue(node.nodeValue); });
+  root.querySelectorAll?.('input[placeholder], textarea[placeholder]').forEach(el => {
+    el.placeholder = translateTextValue(el.placeholder);
+  });
+  root.querySelectorAll?.('option').forEach(el => {
+    el.textContent = translateTextValue(el.textContent);
+  });
+}
+function bindLanguageControls() {
+  document.querySelectorAll('[data-lang-toggle]').forEach(btn => {
+    btn.onclick = () => setLang(lang() === 'en' ? 'zh' : 'en');
+  });
+}
+function afterRender() {
+  bindLanguageControls();
+  applyI18n();
+}
+async function renderRoute() {
+  await route();
+  afterRender();
+}
+
 const statusText = {
   pending: '待审核',
   processing: '处理中',
@@ -77,6 +163,7 @@ function openModal(title, subtitle, content, size = '') {
   modalRoot.querySelector('.modal-backdrop').addEventListener('click', e => {
     if (e.target.classList.contains('modal-backdrop')) closeModal();
   });
+  afterRender();
 }
 async function api(path, options = {}) {
   const opts = { method: options.method || 'GET', headers: { ...(options.headers || {}) }, credentials: 'same-origin' };
@@ -112,7 +199,7 @@ async function init() {
     state.config = config;
     state.me = me.user;
     applyTheme();
-    await route();
+    await renderRoute();
   } catch (error) {
     app.innerHTML = `<div class="center-screen"><h2>应用加载失败</h2><p>${esc(error.message)}</p><button class="btn primary" id="retry">重试</button></div>`;
     document.querySelector('#retry')?.addEventListener('click', () => location.reload());
@@ -120,7 +207,7 @@ async function init() {
 }
 
 function go(hash) { location.hash = hash; }
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', renderRoute);
 
 async function route() {
   const hash = location.hash || (state.me ? '#/apply' : '#/login');
@@ -149,7 +236,7 @@ async function route() {
 
 function authTemplate(title, subtitle, formHtml) {
   const site = state.config?.site || {};
-  return `<main class="auth-wrap">
+  return `${langButton()}<main class="auth-wrap">
     <section class="auth-brand">
       <div class="auth-logo">${esc(site.logoText || '域')}</div>
       <h1>${esc(site.title || '免费二级域名注册中心')}</h1>
@@ -263,6 +350,7 @@ function shell(title, content) {
   const site = state.config.site || {};
   const isAdmin = state.me?.role === 'admin';
   app.innerHTML = `<div class="app-shell">
+    <div class="sidebar-mask" id="sidebar-mask"></div>
     <aside class="sidebar">
       <div class="brand"><div>${esc(site.logoText || '域')}</div><strong>${esc(site.title || '域名注册中心')}</strong></div>
       <nav>
@@ -277,7 +365,7 @@ function shell(title, content) {
       <header class="topbar">
         <button class="btn ghost menu-btn" id="menu">☰</button>
         <h1>${esc(title)}</h1>
-        <div>${statusBadge(state.me.status || 'active')}</div>
+        <div class="topbar-actions">${langButton()}${statusBadge(state.me.status || 'active')}</div>
       </header>
       <section class="content">${content}</section>
     </main>
@@ -287,7 +375,23 @@ function shell(title, content) {
     state.me = null;
     go('#/login');
   });
-  document.querySelector('#menu')?.addEventListener('click', () => document.querySelector('.sidebar')?.classList.toggle('open'));
+  const sidebar = document.querySelector('.sidebar');
+  const mask = document.querySelector('#sidebar-mask');
+  const closeSidebar = () => {
+    sidebar?.classList.remove('open');
+    mask?.classList.remove('open');
+    document.body.classList.remove('sidebar-open');
+  };
+  const openSidebar = () => {
+    sidebar?.classList.add('open');
+    mask?.classList.add('open');
+    document.body.classList.add('sidebar-open');
+  };
+  document.querySelector('#menu')?.addEventListener('click', openSidebar);
+  mask?.addEventListener('click', closeSidebar);
+  document.querySelectorAll('.sidebar .nav').forEach(a => a.addEventListener('click', closeSidebar));
+  bindLanguageControls();
+  setTimeout(() => applyI18n(), 0);
 }
 
 async function loadApplications() {
@@ -306,7 +410,7 @@ async function renderApply() {
   try {
     await loadApplications();
     const recent = state.applications.slice(0, 3);
-    const recentHtml = recent.map(domainCard).join('');
+    const recentHtml = recent.map(a => domainCard(a, { readonly: true })).join('');
 
     shell('域名注册', `
       <div class="notice">请勿申请违法、侵权、仿冒或误导性域名。</div>
@@ -329,7 +433,7 @@ async function renderApply() {
       </section>
 
       <section class="card">
-        <div class="section-head"><div><h2>最近域名</h2><p>默认有效期 ${domainConfig().validDays} 天，最后 ${domainConfig().renewWindowDays} 天可申请续期。</p></div><a class="btn soft" href="#/domains">全部域名</a></div>
+        <div class="section-head"><div><h2>域名列表</h2><p>这里只显示域名状态，不显示编辑操作；进入“域名管理”后再管理解析。</p></div><a class="btn soft" href="#/domains">全部域名</a></div>
         ${recentHtml || '<div class="empty">暂无域名，点击右上方注册新域名。</div>'}
       </section>`);
     document.querySelector('#open-register').addEventListener('click', showRegisterDomainModal);
@@ -419,7 +523,7 @@ async function renderDomains() {
   } catch (error) { toast(error.message, 'error'); }
 }
 
-function domainCard(a) {
+function domainCard(a, options = {}) {
   const approved = a.status === 'approved';
   const dns = approved ? (a.dnsConfigured ? `${a.recordType} → ${a.recordContent}` : '未配置') : '审核通过后可配置';
   const status = a.statusText || statusText[a.status] || a.status;
@@ -437,13 +541,14 @@ function domainCard(a) {
       <div><span>DNS</span><strong class="mono">${esc(dns)}</strong></div>
     </div>
     ${a.errorMessage ? `<p class="error-line">${esc(a.errorMessage)}</p>` : ''}
-    <div class="card-actions">
+    ${a.reviewNote ? `<p class="note-line"><b>管理员留言：</b>${esc(a.reviewNote)}</p>` : ''}
+    ${options.readonly ? '' : `<div class="card-actions">
       <button class="btn soft" data-manage="${attr(a.id)}">管理域名</button>
       ${a.canRenew ? `<button class="btn success" data-renew="${attr(a.id)}">续期</button>` : ''}
       ${a.canRequestDelete ? `<button class="btn danger-soft" data-request-delete="${attr(a.id)}">申请删除域名</button>` : ''}
       ${a.deleteRequested ? `<button class="btn secondary" disabled>删除待审核</button>` : ''}
       ${a.canDelete ? `<button class="btn danger-soft" data-delete="${attr(a.id)}">删除无效域名</button>` : ''}
-    </div>
+    </div>`}
   </article>`;
 }
 
@@ -789,16 +894,19 @@ async function renderAdminApplications() {
       <td class="actions-cell">
         ${a.status === 'pending' ? `<button class="btn success small" data-review="approve" data-id="${a.id}">批准</button><button class="btn danger-soft small" data-review="reject" data-id="${a.id}">拒绝</button>` : ''}
         ${a.deleteRequested ? `<button class="btn danger small" data-review="approve-delete" data-id="${a.id}">批准删除</button><button class="btn soft small" data-review="reject-delete" data-id="${a.id}">拒绝删除</button>` : ''}
-        ${a.status === 'approved' && !a.deleteRequested ? `<button class="btn danger-soft small" data-review="revoke" data-id="${a.id}">撤销</button>` : ''}
-        ${['rejected','revoked'].includes(a.status) ? `<button class="btn danger-soft small" data-review="delete" data-id="${a.id}">删除</button>` : ''}
+        ${a.status === 'approved' && !a.deleteRequested ? `<button class="btn danger-soft small" data-review="revoke" data-id="${a.id}">撤销</button><button class="btn danger-soft small" data-review="disable" data-id="${a.id}">禁用</button>` : ''}
+        ${['rejected','revoked','disabled'].includes(a.status) ? `<button class="btn danger-soft small" data-review="delete" data-id="${a.id}">删除</button>` : ''}
       </td>
     </tr>`).join('');
     shell('域名审核', `<section class="card"><div class="section-head"><div><h2>域名审核</h2><p>先审核域名；审核通过后，用户才能进入域名管理添加 DNS 解析。</p></div></div><div class="table-wrap"><table><thead><tr><th>域名</th><th>用户</th><th>DNS</th><th>状态</th><th>到期</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="6">暂无申请</td></tr>'}</tbody></table></div></section>`);
     document.querySelectorAll('[data-review]').forEach(btn => btn.addEventListener('click', async () => {
       const action = btn.dataset.review;
-      const label = { approve:'批准', reject:'拒绝', revoke:'撤销', delete:'删除', 'approve-delete':'批准删除', 'reject-delete':'拒绝删除' }[action];
-      if (!confirm(`确认${label}该域名？`)) return;
-      const note = (action === 'delete' || action === 'approve-delete') ? '' : (prompt('管理员备注，可留空', '') ?? '');
+      const label = { approve:'批准', reject:'拒绝', revoke:'撤销', disable:'禁用', delete:'删除', 'approve-delete':'批准删除', 'reject-delete':'拒绝删除' }[action];
+      const confirmMessage = action === 'disable'
+        ? '确认禁用该域名？禁用后将删除该域名所有 DNS 解析，用户不能继续管理该域名。'
+        : `确认${label}该域名？`;
+      if (!confirm(confirmMessage)) return;
+      const note = (action === 'delete' || action === 'approve-delete') ? '' : (prompt('管理员备注，可留空；填写后用户域名界面会显示', '') ?? '');
       btn.disabled = true;
       try {
         await api(`/api/admin/applications/${btn.dataset.id}/${action}`, { method:'POST', body:{ note } });
