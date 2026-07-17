@@ -267,6 +267,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (match && method === 'POST') return cancelDeleteOwnApplication(request, env, decodeURIComponent(match[1]));
 
   if (method === 'GET' && pathname === '/api/messages') return listOwnMessages(request, env);
+  if (method === 'POST' && pathname === '/api/messages/contact-admin') return contactAdminMessage(request, env);
   if (method === 'POST' && pathname === '/api/messages/read-batch') return markOwnMessagesReadBatch(request, env);
   match = pathname.match(/^\/api\/messages\/([^/]+)\/read$/);
   if (match && method === 'POST') return markOwnMessageRead(request, env, decodeURIComponent(match[1]));
@@ -1536,6 +1537,24 @@ function operationDescription(action: string, targetType: string, targetId: stri
   if (action.startsWith('admin.message_')) return '管理员处理消息中心内容';
   if (action.startsWith('admin.settings_')) return '管理员修改系统设置';
   return `${operationActionText(action)}${targetType ? `（${targetType}${targetId ? `：${targetId}` : ''}）` : ''}`;
+}
+
+
+async function contactAdminMessage(request: Request, env: Env): Promise<Response> {
+  const user = await requireUser(env, request);
+  const body = await readJson<Record<string, unknown>>(request, 128 * 1024);
+  const title = cleanText(body.title, 120);
+  const text = cleanText(body.body ?? body.content, 5000);
+  if (!title) throw new HttpError(400, 'TITLE_REQUIRED', '请填写消息标题');
+  if (!text) throw new HttpError(400, 'BODY_REQUIRED', '请填写消息内容');
+  const id = crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO system_messages (id, sender_user_id, target_type, target_user_id, target_role, title, body, level, status, sent_at)
+    VALUES (?, ?, 'role', NULL, 'admin', ?, ?, 'info', 'sent', datetime('now'))
+  `).bind(id, user.id, title, text).run();
+  await audit(env, request, user.id, 'message.contact_admin', 'message', id, { title });
+  const row = await env.DB.prepare(`SELECT m.*, sender.username AS sender_username FROM system_messages m LEFT JOIN users sender ON sender.id=m.sender_user_id WHERE m.id=?`).bind(id).first<MessageRow>();
+  return ok({ sent: true, message: serializeMessage(row!) });
 }
 
 async function listOwnMessages(request: Request, env: Env): Promise<Response> {
