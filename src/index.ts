@@ -46,6 +46,7 @@ export interface Env {
 
 type Role = 'admin' | 'user';
 type UserStatus = 'active' | 'disabled' | 'deleted';
+type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'TXT' | 'MX';
 
 interface UserRow {
   id: string;
@@ -91,6 +92,28 @@ interface ApplicationRow {
   delete_requested_by?: string | null;
 }
 
+interface DnsRecordRow {
+  id: string;
+  application_id: string;
+  user_id: string;
+  host: string;
+  name: string;
+  type: DnsRecordType;
+  content: string;
+  priority?: number | null;
+  proxied?: number | null;
+  ttl?: number | null;
+  cf_record_id?: string | null;
+  status: string;
+  error_message?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  deleted_at?: string | null;
+  fqdn_unicode?: string | null;
+  fqdn_ascii?: string | null;
+  username?: string | null;
+}
+
 interface AppSettings {
   site: {
     title: string;
@@ -120,7 +143,7 @@ interface AppSettings {
       suffixAscii: string;
       zoneId: string;
       allowedTypes: string[];
-      defaultType: 'CNAME' | 'A' | 'AAAA';
+      defaultType: DnsRecordType;
       ttl: number;
       proxied: boolean;
       enabled: boolean;
@@ -186,6 +209,14 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   match = pathname.match(/^\/api\/applications\/([^/]+)\/dns$/);
   if (match && method === 'PATCH') return updateOwnDns(request, env, decodeURIComponent(match[1]));
+
+  match = pathname.match(/^\/api\/applications\/([^/]+)\/dns-records$/);
+  if (match && method === 'GET') return listOwnDnsRecords(request, env, decodeURIComponent(match[1]));
+  if (match && method === 'POST') return createOwnDnsRecord(request, env, decodeURIComponent(match[1]));
+
+  match = pathname.match(/^\/api\/dns-records\/([^/]+)$/);
+  if (match && method === 'PATCH') return updateOwnDnsRecordManaged(request, env, decodeURIComponent(match[1]));
+  if (match && method === 'DELETE') return deleteOwnDnsRecordManaged(request, env, decodeURIComponent(match[1]));
 
   match = pathname.match(/^\/api\/applications\/([^/]+)\/renew$/);
   if (match && method === 'POST') return renewOwnApplication(request, env, decodeURIComponent(match[1]));
@@ -272,6 +303,28 @@ async function ensureSchema(env: Env): Promise<void> {
       )
     `),
     env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS dns_records (
+        id TEXT PRIMARY KEY,
+        application_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        host TEXT NOT NULL DEFAULT '@',
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        priority INTEGER,
+        proxied INTEGER DEFAULT 0,
+        ttl INTEGER DEFAULT 1,
+        cf_record_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT,
+        deleted_at TEXT,
+        FOREIGN KEY(application_id) REFERENCES domain_applications(id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      )
+    `),
+    env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id TEXT PRIMARY KEY,
         actor_user_id TEXT,
@@ -286,6 +339,8 @@ async function ensureSchema(env: Env): Promise<void> {
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_apps_user ON domain_applications(user_id, created_at)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_apps_fqdn ON domain_applications(fqdn_ascii)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_dns_records_app ON dns_records(application_id, deleted_at)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_dns_records_cf ON dns_records(cf_record_id)'),
   ]);
 
   const alters = [
@@ -684,6 +739,262 @@ async function updateOwnDns(request: Request, env: Env, id: string): Promise<Res
   return ok({ application: serializeApplication(updated!, settings) });
 }
 
+async function listOwnDnsRecords(request: Request, env: Env, applicationId: string): Promise<Response> {
+  const user = await requireUser(env, request);
+  const app = await env.DB.prepare(`
+    SELECT * FROM domain_applications WHERE id=? AND user_id=? AND (deleted_at IS NULL OR deleted_at='')
+  `).bind(applicationId, user.id).first<ApplicationRow>();
+  if (!app) throw new HttpError(404, 'NOT_FOUND', '域名不存在');
+
+  const rows = await env.DB.prepare(`
+    SELECT * FROM dns_records
+    WHERE application_id=? AND user_id=? AND (deleted_at IS NULL OR deleted_at='')
+    ORDER BY CASE host WHEN '@' THEN 0 ELSE 1 END, host ASC, type ASC, created_at ASC
+  `).bind(applicationId, user.id).all<DnsRecordRow>();
+
+  return ok({ records: (rows.results || []).map(serializeDnsRecord) });
+}
+
+async function createOwnDnsRecord(request: Request, env: Env, applicationId: string): Promise<Response> {
+  const user = await requireUser(env, request);
+  const body = await readJson<Record<string, unknown>>(request);
+  const settings = await loadSettings(env);
+  const app = await env.DB.prepare(`
+    SELECT * FROM domain_applications WHERE id=? AND user_id=? AND (deleted_at IS NULL OR deleted_at='')
+  `).bind(applicationId, user.id).first<ApplicationRow>();
+  if (!app) throw new HttpError(404, 'NOT_FOUND', '域名不存在');
+  if (!['pending', 'approved', 'processing'].includes(app.status)) throw new HttpError(409, 'INVALID_STATE', '当前域名状态不能添加解析');
+  if (app.delete_requested_at) throw new HttpError(409, 'DELETE_REQUESTED', '该域名正在等待删除审核，不能添加解析');
+
+  const suffix = settings.dns.suffixes.find(x => x.suffixAscii === app.suffix_ascii);
+  if (!suffix) throw new HttpError(409, 'SUFFIX_MISSING', '根域名配置不存在');
+
+  const host = normalizeDnsHost(body.host);
+  const name = fullRecordName(host, app.fqdn_ascii);
+  const type = normalizeRecordType(body.type || body.recordType, suffix.allowedTypes);
+  const content = normalizeDnsTarget(type, body.content || body.target, name);
+  const priority = type === 'MX' ? clamp(Number(body.priority || 10), 0, 65535) : null;
+  const ttl = clamp(Number(body.ttl || suffix.ttl || 1), 1, 86400);
+  const proxied = ['A', 'AAAA', 'CNAME'].includes(type) && asBoolean(body.proxied, suffix.proxied) ? 1 : 0;
+
+  const duplicate = await env.DB.prepare(`
+    SELECT id FROM dns_records
+    WHERE application_id=? AND name=? COLLATE NOCASE AND type=? AND (deleted_at IS NULL OR deleted_at='')
+    LIMIT 1
+  `).bind(applicationId, name, type).first<{ id: string }>();
+  if (duplicate) throw new HttpError(409, 'DNS_RECORD_EXISTS', '同一主机和类型的解析已存在，请编辑原记录');
+
+  const id = crypto.randomUUID();
+  let cfRecordId = '';
+  let status = app.status === 'approved' ? 'active' : 'pending';
+  let errorMessage = '';
+
+  if (app.status === 'approved') {
+    const token = resolveDnsToken(env);
+    if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
+    try {
+      const record = await createDnsRecord(token, suffix.zoneId, dnsPayload({ type, name, content, ttl, proxied, priority }, `Created by storage portal dns record ${id}`));
+      cfRecordId = record.id || '';
+      status = 'active';
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 创建失败';
+      throw new HttpError(502, 'DNS_CREATE_FAILED', errorMessage);
+    }
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO dns_records (id,application_id,user_id,host,name,type,content,priority,proxied,ttl,cf_record_id,status,error_message)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, applicationId, user.id, host, name, type, content, priority, proxied, ttl, cfRecordId, status, errorMessage).run();
+
+  await env.DB.prepare(`
+    UPDATE domain_applications
+    SET record_type=COALESCE(NULLIF(record_type,''),?), record_content=COALESCE(NULLIF(record_content,''),?), dns_record_id=COALESCE(NULLIF(dns_record_id,''),?), updated_at=datetime('now')
+    WHERE id=?
+  `).bind(type, content, cfRecordId, applicationId).run();
+
+  await audit(env, request, user.id, 'dns_record.create', 'dns_record', id, { applicationId, name, type });
+  const row = await env.DB.prepare(`SELECT * FROM dns_records WHERE id=?`).bind(id).first<DnsRecordRow>();
+  return ok({ record: serializeDnsRecord(row!) });
+}
+
+async function updateOwnDnsRecordManaged(request: Request, env: Env, recordId: string): Promise<Response> {
+  const user = await requireUser(env, request);
+  const body = await readJson<Record<string, unknown>>(request);
+  const settings = await loadSettings(env);
+  const row = await env.DB.prepare(`
+    SELECT r.*,a.fqdn_ascii,a.suffix_ascii,a.status AS app_status,a.delete_requested_at
+    FROM dns_records r
+    JOIN domain_applications a ON a.id=r.application_id
+    WHERE r.id=? AND r.user_id=? AND (r.deleted_at IS NULL OR r.deleted_at='') AND (a.deleted_at IS NULL OR a.deleted_at='')
+  `).bind(recordId, user.id).first<any>();
+  if (!row) throw new HttpError(404, 'NOT_FOUND', '解析记录不存在');
+  if (row.delete_requested_at) throw new HttpError(409, 'DELETE_REQUESTED', '该域名正在等待删除审核，不能修改解析');
+
+  const suffix = settings.dns.suffixes.find(x => x.suffixAscii === row.suffix_ascii);
+  if (!suffix) throw new HttpError(409, 'SUFFIX_MISSING', '根域名配置不存在');
+  if (row.app_status === 'approved' && !settings.domain.allowDnsEditAfterApproved) throw new HttpError(403, 'DNS_EDIT_CLOSED', '管理员已关闭生效域名的 DNS 修改');
+
+  const host = normalizeDnsHost(body.host ?? row.host);
+  const name = fullRecordName(host, row.fqdn_ascii);
+  const type = normalizeRecordType(body.type || body.recordType || row.type, suffix.allowedTypes);
+  const content = normalizeDnsTarget(type, body.content || body.target || row.content, name);
+  const priority = type === 'MX' ? clamp(Number(body.priority || row.priority || 10), 0, 65535) : null;
+  const ttl = clamp(Number(body.ttl || row.ttl || suffix.ttl || 1), 1, 86400);
+  const proxied = ['A', 'AAAA', 'CNAME'].includes(type) && asBoolean(body.proxied, Boolean(row.proxied)) ? 1 : 0;
+
+  const duplicate = await env.DB.prepare(`
+    SELECT id FROM dns_records
+    WHERE application_id=? AND id!=? AND name=? COLLATE NOCASE AND type=? AND (deleted_at IS NULL OR deleted_at='')
+    LIMIT 1
+  `).bind(row.application_id, recordId, name, type).first<{ id: string }>();
+  if (duplicate) throw new HttpError(409, 'DNS_RECORD_EXISTS', '同一主机和类型的解析已存在');
+
+  let cfRecordId = row.cf_record_id || '';
+  let status = row.status || 'pending';
+  let errorMessage = '';
+  if (row.app_status === 'approved') {
+    const token = resolveDnsToken(env);
+    if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
+    try {
+      if (cfRecordId) {
+        const record = await updateDnsRecord(token, suffix.zoneId, cfRecordId, dnsPayload({ type, name, content, ttl, proxied, priority }, `Updated by storage portal dns record ${recordId}`));
+        cfRecordId = record.id || cfRecordId;
+      } else {
+        const record = await createDnsRecord(token, suffix.zoneId, dnsPayload({ type, name, content, ttl, proxied, priority }, `Created by storage portal dns record ${recordId}`));
+        cfRecordId = record.id || '';
+      }
+      status = 'active';
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 更新失败';
+      await env.DB.prepare(`UPDATE dns_records SET error_message=?,status='error',updated_at=datetime('now') WHERE id=?`).bind(errorMessage, recordId).run();
+      throw new HttpError(502, 'DNS_UPDATE_FAILED', errorMessage);
+    }
+  }
+
+  await env.DB.prepare(`
+    UPDATE dns_records
+    SET host=?,name=?,type=?,content=?,priority=?,proxied=?,ttl=?,cf_record_id=?,status=?,error_message=?,updated_at=datetime('now')
+    WHERE id=? AND user_id=?
+  `).bind(host, name, type, content, priority, proxied, ttl, cfRecordId, status, errorMessage, recordId, user.id).run();
+
+  await audit(env, request, user.id, 'dns_record.update', 'dns_record', recordId, { name, type });
+  const updated = await env.DB.prepare(`SELECT * FROM dns_records WHERE id=?`).bind(recordId).first<DnsRecordRow>();
+  return ok({ record: serializeDnsRecord(updated!) });
+}
+
+async function deleteOwnDnsRecordManaged(request: Request, env: Env, recordId: string): Promise<Response> {
+  const user = await requireUser(env, request);
+  const settings = await loadSettings(env);
+  const row = await env.DB.prepare(`
+    SELECT r.*,a.suffix_ascii,a.status AS app_status,a.delete_requested_at
+    FROM dns_records r
+    JOIN domain_applications a ON a.id=r.application_id
+    WHERE r.id=? AND r.user_id=? AND (r.deleted_at IS NULL OR r.deleted_at='') AND (a.deleted_at IS NULL OR a.deleted_at='')
+  `).bind(recordId, user.id).first<any>();
+  if (!row) throw new HttpError(404, 'NOT_FOUND', '解析记录不存在');
+  if (row.delete_requested_at) throw new HttpError(409, 'DELETE_REQUESTED', '该域名正在等待删除审核，不能删除解析');
+
+  const suffix = settings.dns.suffixes.find(x => x.suffixAscii === row.suffix_ascii);
+  if (!suffix) throw new HttpError(409, 'SUFFIX_MISSING', '根域名配置不存在');
+  if (row.app_status === 'approved' && row.cf_record_id) {
+    const token = resolveDnsToken(env);
+    if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
+    try { await deleteDnsRecord(token, suffix.zoneId, row.cf_record_id); }
+    catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 删除失败';
+      await env.DB.prepare(`UPDATE dns_records SET error_message=?,status='error',updated_at=datetime('now') WHERE id=?`).bind(message, recordId).run();
+      throw new HttpError(502, 'DNS_DELETE_FAILED', message);
+    }
+  }
+
+  await env.DB.prepare(`UPDATE dns_records SET deleted_at=datetime('now'),status='deleted',updated_at=datetime('now') WHERE id=? AND user_id=?`).bind(recordId, user.id).run();
+  await audit(env, request, user.id, 'dns_record.delete', 'dns_record', recordId);
+  return ok({ deleted: true });
+}
+
+async function adminDnsRecords(request: Request, env: Env, url: URL): Promise<Response> {
+  await requireAdmin(env, request);
+  const limit = clamp(Number(url.searchParams.get('limit') || 500), 1, 1000);
+  const rows = await env.DB.prepare(`
+    SELECT r.*,a.fqdn_unicode,a.fqdn_ascii,u.username
+    FROM dns_records r
+    JOIN domain_applications a ON a.id=r.application_id
+    LEFT JOIN users u ON u.id=r.user_id
+    WHERE (r.deleted_at IS NULL OR r.deleted_at='')
+    ORDER BY r.created_at DESC
+    LIMIT ?
+  `).bind(limit).all<DnsRecordRow>();
+  return ok({ records: (rows.results || []).map(serializeDnsRecord) });
+}
+
+async function syncPendingDnsRecordsForApp(env: Env, app: ApplicationRow, suffix: AppSettings['dns']['suffixes'][number], actorId: string): Promise<number> {
+  const rows = await env.DB.prepare(`
+    SELECT * FROM dns_records
+    WHERE application_id=? AND (deleted_at IS NULL OR deleted_at='') AND (cf_record_id IS NULL OR cf_record_id='')
+  `).bind(app.id).all<DnsRecordRow>();
+  const records = rows.results || [];
+  if (!records.length) return 0;
+  const token = resolveDnsToken(env);
+  if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
+  let created = 0;
+  for (const record of records) {
+    try {
+      const cf = await createDnsRecord(token, suffix.zoneId, dnsPayload(record, `Created by storage portal dns record ${record.id}`));
+      await env.DB.prepare(`
+        UPDATE dns_records SET cf_record_id=?,status='active',error_message=NULL,updated_at=datetime('now') WHERE id=?
+      `).bind(cf.id || '', record.id).run();
+      created += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 创建失败';
+      await env.DB.prepare(`UPDATE dns_records SET status='error',error_message=?,updated_at=datetime('now') WHERE id=?`).bind(message, record.id).run();
+    }
+  }
+  return created;
+}
+
+async function deleteAllDnsRecordsForApp(env: Env, app: ApplicationRow, suffix: AppSettings['dns']['suffixes'][number]): Promise<void> {
+  const token = resolveDnsToken(env);
+  const rows = await env.DB.prepare(`
+    SELECT * FROM dns_records WHERE application_id=? AND (deleted_at IS NULL OR deleted_at='')
+  `).bind(app.id).all<DnsRecordRow>();
+  for (const record of rows.results || []) {
+    if (record.cf_record_id) {
+      if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
+      await deleteDnsRecord(token, suffix.zoneId, record.cf_record_id);
+    }
+    await env.DB.prepare(`UPDATE dns_records SET deleted_at=datetime('now'),status='deleted',updated_at=datetime('now') WHERE id=?`).bind(record.id).run();
+  }
+  if (app.dns_record_id) {
+    if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
+    try { await deleteDnsRecord(token, suffix.zoneId, app.dns_record_id); } catch {}
+  }
+}
+
+function serializeDnsRecord(row: DnsRecordRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    applicationId: row.application_id,
+    userId: row.user_id,
+    host: row.host || '@',
+    name: row.name,
+    type: row.type,
+    content: row.content,
+    priority: row.priority ?? null,
+    proxied: Boolean(row.proxied),
+    ttl: Number(row.ttl || 1),
+    cfRecordId: row.cf_record_id || '',
+    status: row.status || 'pending',
+    statusText: ({ pending: '待写入', active: '已生效', error: '失败', deleted: '已删除' } as Record<string,string>)[row.status] || row.status,
+    errorMessage: row.error_message || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at || null,
+    fqdnUnicode: row.fqdn_unicode || null,
+    fqdnAscii: row.fqdn_ascii || null,
+    username: row.username || null,
+  };
+}
+
 async function renewOwnApplication(request: Request, env: Env, id: string): Promise<Response> {
   const user = await requireUser(env, request);
   const settings = await loadSettings(env);
@@ -834,15 +1145,11 @@ async function adminReviewApplication(request: Request, env: Env, id: string, ac
     const suffix = settings.dns.suffixes.find(x => x.suffixAscii === app.suffix_ascii);
     if (!suffix) throw new HttpError(409, 'SUFFIX_MISSING', '该后缀配置不存在');
 
-    if (app.dns_record_id) {
-      const token = resolveDnsToken(env);
-      if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
-      try { await deleteDnsRecord(token, suffix.zoneId, app.dns_record_id); }
-      catch (error) {
-        const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 删除失败';
-        await env.DB.prepare(`UPDATE domain_applications SET error_message=?, updated_at=datetime('now') WHERE id=?`).bind(message, id).run();
-        throw new HttpError(502, 'DNS_DELETE_FAILED', message);
-      }
+    try { await deleteAllDnsRecordsForApp(env, app, suffix); }
+    catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 删除失败';
+      await env.DB.prepare(`UPDATE domain_applications SET error_message=?, updated_at=datetime('now') WHERE id=?`).bind(message, id).run();
+      throw new HttpError(502, 'DNS_DELETE_FAILED', message);
     }
 
     await env.DB.prepare(`
@@ -871,60 +1178,32 @@ async function adminReviewApplication(request: Request, env: Env, id: string, ac
 
   if (action === 'approve') {
     if (app.status !== 'pending') throw new HttpError(409, 'INVALID_STATE', '只有待审核申请可以批准');
-
     const expires = app.expires_at || new Date(Date.now() + settings.domain.validDays * DAY).toISOString();
 
-    if (!app.record_content) {
-      await env.DB.prepare(`
-        UPDATE domain_applications
-        SET status='approved',dns_record_id=NULL,review_note=?,reviewed_at=datetime('now'),reviewed_by=?,expires_at=?,error_message=NULL,updated_at=datetime('now')
-        WHERE id=?
-      `).bind(note || '未配置 DNS，已先批准域名', admin.id, expires, id).run();
+    await env.DB.prepare(`
+      UPDATE domain_applications
+      SET status='approved',review_note=?,reviewed_at=datetime('now'),reviewed_by=?,expires_at=?,error_message=NULL,updated_at=datetime('now')
+      WHERE id=?
+    `).bind(note || '已批准，DNS 可后续在域名管理中添加', admin.id, expires, id).run();
 
-      await audit(env, request, admin.id, 'application.approve_without_dns', 'domain_application', id, { fqdnAscii: app.fqdn_ascii });
-      return ok({ status: 'approved', dnsRecordId: null, dnsRequired: false });
+    let synced = 0;
+    try { synced = await syncPendingDnsRecordsForApp(env, app, suffix, admin.id); }
+    catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 同步失败';
+      await env.DB.prepare(`UPDATE domain_applications SET error_message=?,updated_at=datetime('now') WHERE id=?`).bind(message, id).run();
     }
 
-    const token = resolveDnsToken(env);
-    if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
-    await env.DB.prepare(`UPDATE domain_applications SET status='processing',error_message=NULL WHERE id=?`).bind(id).run();
-
-    try {
-      const record = await createDnsRecord(token, suffix.zoneId, {
-        type: (app.record_type || suffix.defaultType) as 'CNAME' | 'A' | 'AAAA',
-        name: app.fqdn_ascii,
-        content: app.record_content,
-        ttl: Number(app.ttl || suffix.ttl || 1),
-        proxied: Boolean(app.proxied),
-        comment: `Created by storage portal ${app.id}`,
-      });
-
-      await env.DB.prepare(`
-        UPDATE domain_applications
-        SET status='approved',dns_record_id=?,review_note=?,reviewed_at=datetime('now'),reviewed_by=?,expires_at=?,error_message=NULL,updated_at=datetime('now')
-        WHERE id=?
-      `).bind(record.id, note, admin.id, expires, id).run();
-
-      await audit(env, request, admin.id, 'application.approve', 'domain_application', id, { recordId: record.id });
-      return ok({ status: 'approved', dnsRecordId: record.id });
-    } catch (error) {
-      const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 创建失败';
-      await env.DB.prepare(`UPDATE domain_applications SET status='pending',error_message=? WHERE id=?`).bind(message, id).run();
-      throw new HttpError(502, 'DNS_CREATE_FAILED', message);
-    }
+    await audit(env, request, admin.id, 'application.approve', 'domain_application', id, { syncedDnsRecords: synced });
+    return ok({ status: 'approved', syncedDnsRecords: synced });
   }
 
   if (action === 'revoke') {
     if (app.status !== 'approved') throw new HttpError(409, 'INVALID_STATE', '只有正常域名可以撤销');
-    if (app.dns_record_id) {
-      const token = resolveDnsToken(env);
-      if (!token) throw new HttpError(503, 'DNS_TOKEN_MISSING', '尚未配置 Cloudflare DNS API Token');
-      try { await deleteDnsRecord(token, suffix.zoneId, app.dns_record_id); }
-      catch (error) {
-        const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 删除失败';
-        await env.DB.prepare(`UPDATE domain_applications SET error_message=? WHERE id=?`).bind(message, id).run();
-        throw new HttpError(502, 'DNS_DELETE_FAILED', message);
-      }
+    try { await deleteAllDnsRecordsForApp(env, app, suffix); }
+    catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 1000) : 'DNS 删除失败';
+      await env.DB.prepare(`UPDATE domain_applications SET error_message=?,updated_at=datetime('now') WHERE id=?`).bind(message, id).run();
+      throw new HttpError(502, 'DNS_DELETE_FAILED', message);
     }
 
     await env.DB.prepare(`
@@ -1051,10 +1330,13 @@ async function loadSettings(env: Env): Promise<AppSettings> {
 
 function defaultSettings(env: Env): AppSettings {
   const suffix = normalizeSuffix(env.DNS_SUFFIX || 'flore.top');
-  const allowedTypes = String(env.DNS_ALLOWED_TYPES || 'CNAME,A,AAAA')
-    .split(',')
-    .map(x => x.trim().toUpperCase())
-    .filter(x => ['CNAME', 'A', 'AAAA'].includes(x));
+  const allowedTypes = Array.from(new Set(
+    String(env.DNS_ALLOWED_TYPES || 'CNAME,A,AAAA,TXT,MX')
+      .split(',')
+      .map(x => x.trim().toUpperCase())
+      .filter(x => ['CNAME', 'A', 'AAAA', 'TXT', 'MX'].includes(x))
+      .concat(['CNAME', 'A', 'AAAA', 'TXT', 'MX'])
+  ));
 
   const reserved = String(env.DNS_RESERVED_PREFIXES || 'www,api,admin,apply,storage,mail,smtp,imap,pop,ftp,cdn,static,status,support')
     .split(',')
@@ -1092,7 +1374,7 @@ function defaultSettings(env: Env): AppSettings {
         allowedTypes: allowedTypes.length ? allowedTypes : ['CNAME'],
         defaultType: (['CNAME','A','AAAA'].includes(String(env.DNS_DEFAULT_TYPE || '').toUpperCase())
           ? String(env.DNS_DEFAULT_TYPE).toUpperCase()
-          : 'CNAME') as 'CNAME' | 'A' | 'AAAA',
+          : 'CNAME') as DnsRecordType,
         ttl: clamp(Number(env.DNS_TTL || 1), 1, 86400),
         proxied: isEnabled(env.DNS_PROXIED, false),
         enabled: true,
@@ -1400,18 +1682,36 @@ function normalizeSuffix(raw: string): string {
   return value;
 }
 
-function normalizeRecordType(raw: unknown, allowed: string[]): 'CNAME' | 'A' | 'AAAA' {
+function normalizeRecordType(raw: unknown, allowed: string[]): DnsRecordType {
   const type = String(raw || 'CNAME').trim().toUpperCase();
   const allowedSet = new Set((allowed || ['CNAME']).map(x => x.toUpperCase()));
-  if (!['CNAME', 'A', 'AAAA'].includes(type) || !allowedSet.has(type)) {
+  if (!['CNAME', 'A', 'AAAA', 'TXT', 'MX'].includes(type) || !allowedSet.has(type)) {
     throw new HttpError(400, 'INVALID_RECORD_TYPE', 'DNS 记录类型不可用');
   }
-  return type as 'CNAME' | 'A' | 'AAAA';
+  return type as DnsRecordType;
+}
+
+function normalizeDnsHost(raw: unknown): string {
+  const host = String(raw || '@').trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+  if (!host || host === '@') return '@';
+  if (host.length > 80) throw new HttpError(400, 'INVALID_DNS_HOST', '主机记录过长');
+  const labels = host.split('.');
+  for (const label of labels) {
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) {
+      throw new HttpError(400, 'INVALID_DNS_HOST', '主机记录只能包含字母、数字、连字符和点，且不能以连字符开头或结尾');
+    }
+  }
+  return host;
+}
+
+function fullRecordName(host: string, fqdn: string): string {
+  return host === '@' ? fqdn.toLowerCase() : `${host}.${fqdn}`.toLowerCase();
 }
 
 function normalizeDnsTarget(type: string, raw: unknown, fqdn: string): string {
-  const target = String(raw || '').trim().toLowerCase();
-  if (!target) throw new HttpError(400, 'DNS_TARGET_REQUIRED', '请输入 DNS 目标地址');
+  const original = String(raw || '').trim();
+  const target = original.toLowerCase();
+  if (!original) throw new HttpError(400, 'DNS_TARGET_REQUIRED', '请输入 DNS 目标地址');
 
   if (type === 'CNAME') {
     const cleaned = target.replace(/^https?:\/\//, '').split('/')[0].replace(/\.$/, '');
@@ -1440,7 +1740,35 @@ function normalizeDnsTarget(type: string, raw: unknown, fqdn: string): string {
     return target;
   }
 
+  if (type === 'TXT') {
+    const cleaned = original.replace(/^"|"$/g, '').trim();
+    if (!cleaned || cleaned.length > 2048) throw new HttpError(400, 'INVALID_TXT', 'TXT 内容不能为空，且不能超过 2048 字符');
+    return cleaned;
+  }
+
+  if (type === 'MX') {
+    const cleaned = target.replace(/^https?:\/\//, '').split('/')[0].replace(/\.$/, '');
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(cleaned)) {
+      throw new HttpError(400, 'INVALID_MX', 'MX 目标必须是完整邮件服务器主机名');
+    }
+    return cleaned;
+  }
+
   throw new HttpError(400, 'INVALID_RECORD_TYPE', 'DNS 记录类型错误');
+}
+
+function dnsPayload(record: DnsRecordRow | { type: DnsRecordType; name: string; content: string; ttl?: number | null; proxied?: number | null; priority?: number | null }, comment: string): any {
+  const type = record.type;
+  const payload: any = {
+    type,
+    name: record.name,
+    content: record.content,
+    ttl: Number(record.ttl || 1),
+    comment,
+  };
+  if (['A', 'AAAA', 'CNAME'].includes(type)) payload.proxied = Boolean(record.proxied);
+  if (type === 'MX') payload.priority = clamp(Number(record.priority || 10), 0, 65535);
+  return payload;
 }
 
 async function hashPassword(password: string): Promise<{ hash: string; salt: string }> {
