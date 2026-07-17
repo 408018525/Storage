@@ -680,7 +680,7 @@ Object.assign(I18N_EN, {
 
 Object.assign(I18N_EN, {
   '操作日志':'Operation Logs','最近操作记录':'Recent Operation Logs','仅显示最近 7 天内的账号注册域名、解析等部分操作记录。':'Only account, domain, DNS and related operations from the last 7 days are shown.','管理员可查看近 7 天内未注销账号的操作记录；普通用户仅查看自己的记录。':'Admins can view logs for non-deleted accounts from the last 7 days. Regular users can only view their own logs.','暂无操作记录。':'No operation logs.','操作类型':'Action','操作人':'Operator','操作说明':'Description','目标对象':'Target','IP 地址':'IP Address','保留时间':'Retention','7 天':'7 days','日志会自动清理：超过 7 天、或账号注销后的记录会从 D1 中删除。':'Logs are automatically cleaned from D1 after 7 days or when the account is cancelled.','正在读取操作日志…':'Loading operation logs…','系统':'System','未知用户':'Unknown User',
-  '方式一：站内消息':'Method 1: In-site message','在下方填写标题和内容，消息会直接进入管理员的消息中心，适合已经登录后反馈域名、DNS、额度、审核等问题。':'Fill in the title and content below. The message will go directly to the admin Message Center. Use it for domain, DNS, quota, and review issues after login.','方式二：外部联系':'Method 2: External contact','点击右上角“其他：联系我们”会打开外部反馈页面，适合无法登录、无法收到消息、需要提交截图或更详细资料的情况。':'Click “Other: Contact Us” in the upper right to open the external contact form. Use it when you cannot log in, cannot receive messages, or need to submit screenshots/details.','其他：联系我们':'Other: Contact Us','直接发消息给管理员':'Send a message to admin','发送给管理员':'Send to Admin','请填写要反馈的问题标题':'Enter the issue title','请详细描述您遇到的问题、页面位置、操作步骤和错误提示':'Describe the issue, page, steps, and error message in detail','消息已发送到管理员消息中心':'Message sent to admin Message Center','请填写标题和内容':'Please enter title and content'
+  '方式一：站内消息':'Method 1: In-site message','在下方填写标题和内容，消息会直接进入管理员的消息中心，适合已经登录后反馈域名、DNS、额度、审核等问题。':'Fill in the title and content below. The message will go directly to the admin Message Center. Use it for domain, DNS, quota, and review issues after login.','方式二：外部联系':'Method 2: External contact','点击右上角“其他：联系我们”会打开外部反馈页面，适合无法登录、无法收到消息、需要提交截图或更详细资料的情况。':'Click “Other: Contact Us” in the upper right to open the external contact form. Use it when you cannot log in, cannot receive messages, or need to submit screenshots/details.','其他：联系我们':'Other: Contact Us','直接发消息给管理员':'Send a message to admin','发送给管理员':'Send to Admin','请填写要反馈的问题标题':'Enter the issue title','请详细描述您遇到的问题、页面位置、操作步骤和错误提示':'Describe the issue, page, steps, and error message in detail','消息已发送到管理员消息中心':'Message sent to admin Message Center','请填写标题和内容':'Please enter title and content','回复':'Reply','回复消息':'Reply Message','回复内容':'Reply Content','请输入回复内容':'Enter reply content','发送回复':'Send Reply','消息已回复':'Reply sent','原信息':'Original Message','已转到消息中心':'Moved to Message Center'
 });
 
 Object.assign(I18N_EN, {
@@ -1331,9 +1331,10 @@ function renderHelpCenter() {
     submit.disabled = true;
     try {
       await api('/api/messages/contact-admin', { method:'POST', body:{ title, body } });
-      toast('消息已发送到管理员消息中心', 'success');
       form.reset();
       await refreshMessageBadge();
+      toast('已转到消息中心', 'success');
+      location.hash = '#/messages';
     } catch (error) {
       toast(error.message, 'error');
     } finally {
@@ -1616,12 +1617,48 @@ function messageListHtml(messages, admin = false) {
     </div>
     <div class="message-actions">
       ${!admin && !m.isRead ? `<button class="btn small soft" data-read-message="${attr(m.id)}">标为已读</button>` : ''}
+      ${!admin ? `<button class="btn small secondary" data-reply-message="${attr(m.id)}">回复</button>` : ''}
       ${admin && m.status !== 'sent' ? `<button class="btn small primary" data-send-message="${attr(m.id)}">发送草稿</button><button class="btn small soft" data-edit-message="${attr(m.id)}">编辑草稿</button>` : ''}
       ${admin && m.status === 'template' ? `<button class="btn small secondary" data-template-use="${attr(m.id)}">套用模板</button>` : ''}
       ${admin ? `<button class="btn small danger-soft" data-delete-message="${attr(m.id)}">删除消息</button>` : ''}
     </div>
   </article>`).join('');
 }
+function showReplyMessageModal(message) {
+  if (!message) return;
+  openModal('回复消息', message.title || '消息', `
+    <form id="reply-message-form" class="modal-form reply-message-form">
+      <label class="field wide"><span>回复内容</span><textarea name="body" rows="6" placeholder="请输入回复内容" required></textarea></label>
+      <div class="reply-original-box">
+        <strong>原信息</strong>
+        <div class="reply-original-meta">发送人：${esc(message.senderUsername || '系统管理员')}　时间：${esc(fmtDate(message.sentAt || message.createdAt, true))}</div>
+        <h4>${esc(message.title || '')}</h4>
+        <p>${esc(message.body || '').replace(/\n/g,'<br>')}</p>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn secondary" data-cancel>取消</button><button class="btn primary" type="submit">发送回复</button></div>
+    </form>
+  `, 'wide');
+  document.querySelector('[data-cancel]')?.addEventListener('click', closeModal);
+  document.querySelector('#reply-message-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('button[type="submit"]');
+    const body = String(new FormData(form).get('body') || '').trim();
+    if (!body) { toast('请输入回复内容', 'error'); return; }
+    submit.disabled = true;
+    try {
+      await api(`/api/messages/${encodeURIComponent(message.id)}/reply`, { method:'POST', body:{ body } });
+      closeModal();
+      toast('消息已回复', 'success');
+      await renderMessageCenter();
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
 async function renderMessageCenter(preset = null) {
   shell('消息中心', `<div class="loading-card">正在读取消息…</div>`);
   try {
@@ -1656,6 +1693,10 @@ async function renderMessageCenter(preset = null) {
       await renderMessageCenter();
     }
     document.querySelectorAll('[data-read-message]').forEach(btn => btn.addEventListener('click', async () => { await markMessagesRead([btn.dataset.readMessage]); }));
+    document.querySelectorAll('[data-reply-message]').forEach(btn => btn.addEventListener('click', () => {
+      const msg = inbox.find(m => m.id === btn.dataset.replyMessage);
+      showReplyMessageModal(msg);
+    }));
     document.querySelector('#mark-selected-read')?.addEventListener('click', async () => {
       const ids = [...document.querySelectorAll('.message-check:checked')].map(x => x.value);
       await markMessagesRead(ids);
