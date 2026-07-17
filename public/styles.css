@@ -274,6 +274,8 @@ th,td{padding:13px}table{min-width:700px}.stats{gap:14px}.stat{padding:20px}.sta
 .dns-editor-form .preview-box strong { word-break: break-all; }
 .dns-editor-form select { cursor: pointer; }
 
+
+/* v18 mobile compact appended */
 /* v18 mobile + compact display tuning
    用法：复制本段到 public/styles.css 最后面，不要替换整个 styles.css。 */
 
@@ -550,3 +552,62 @@ th { font-size: 12px; }
   .quota-hero .btn { grid-column: 1 / -1; }
 }
 
+
+/* v19 mobile drawer + global language switch */
+.topbar-actions{display:flex;align-items:center;gap:8px;min-width:0}
+.lang-toggle{min-width:52px;padding:8px 11px!important;border:1px solid rgba(148,163,184,.35)!important;background:rgba(255,255,255,.65)!important;color:#334155!important}
+.auth-wrap{position:relative}.lang-floating{position:fixed;right:18px;top:18px;z-index:20;background:rgba(255,255,255,.82)!important;border:1px solid rgba(148,163,184,.35)!important;color:#334155!important;backdrop-filter:blur(12px)}
+.sidebar-mask{display:none}
+@media(max-width:1000px){
+  .sidebar-mask{display:none;position:fixed;inset:0;background:rgba(15,23,42,.44);z-index:45;backdrop-filter:blur(2px)}
+  .sidebar-mask.open{display:block}
+  body.sidebar-open{overflow:hidden}
+  .sidebar{left:-82vw!important;width:min(78vw,280px);max-width:280px;box-shadow:20px 0 60px rgba(15,23,42,.22)}
+  .sidebar.open{left:0!important}
+  .menu-btn{display:inline-flex!important;min-width:38px;height:34px;padding:6px 10px!important}
+  .topbar-actions .status-pill{display:none}
+  .topbar{gap:8px}.topbar h1{font-size:18px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100vw - 150px)}
+  .lang-toggle{min-width:46px;font-size:12px;padding:7px 9px!important}
+  .auth-brand{display:none}.auth-wrap{display:block;max-width:460px;padding:72px 14px 20px!important}.auth-card{padding:18px!important;border-radius:20px!important}.auth-card h2{font-size:22px!important}
+  .content{padding:12px!important}.notice{font-size:12px!important;padding:10px 12px!important}
+  .quota-hero{padding:14px!important;border-radius:18px!important;gap:10px!important}.quota-icon{width:42px!important;height:42px!important;border-radius:14px!important;font-size:18px!important}.quota-hero strong{font-size:22px!important}.quota-left{padding:8px 12px!important}.quota-left strong{font-size:20px!important}
+  .card,.domain-card,.detail-hero,.detail-panel,.info-card{border-radius:18px!important}.card{padding:14px!important}.card h2,.info-card h2{font-size:18px!important}.section-head{gap:10px!important}
+  .steps{grid-template-columns:1fr 1fr!important;gap:8px!important}.steps div{padding:10px!important}.steps strong{font-size:14px!important}.steps b{width:26px!important;height:26px!important;font-size:12px!important}
+  .domain-card{padding:14px!important}.domain-head{gap:10px!important;margin-bottom:12px!important}.domain-title h3{font-size:17px!important}.domain-title code{font-size:12px!important}.globe{width:36px!important;height:36px!important;border-radius:12px!important;font-size:16px!important}.status-pill{font-size:11px!important;padding:5px 8px!important}
+  .domain-metrics{grid-template-columns:1fr 1fr!important;gap:8px!important}.domain-metrics div,.preview-box{padding:9px!important;border-radius:12px!important}.domain-metrics span,.preview-box span{font-size:11px!important;margin-bottom:4px!important}.domain-metrics strong{font-size:12px!important}
+  .card-actions,.quick-actions,.actions-cell{gap:6px!important}.card-actions .btn,.quick-actions .btn,.actions-cell .btn{flex:1 1 auto;font-size:12px!important;padding:7px 9px!important}
+  .modal-backdrop{align-items:flex-end;padding:8px!important}.modal{width:100%!important;max-height:88vh!important;border-radius:18px 18px 0 0!important}.modal-titlebar{padding:14px 16px!important}.modal-titlebar h2{font-size:18px!important}.modal-titlebar p{font-size:12px!important}.modal-icon{width:36px!important;height:36px!important;font-size:18px!important}.modal-x{font-size:34px!important}.modal-body{padding:14px!important}.modal-form{gap:12px!important}.modal-actions{gap:8px!important}.modal-actions .btn{flex:1}
+  .field{gap:5px!important}.field span{font-size:12px!important}.field input,.field select,.field textarea{min-height:40px!important;border-radius:12px!important;padding:10px 12px!important;font-size:13px!important}.field em{font-size:11px!important}.suffix-input{grid-template-columns:1fr!important}.suffix-input input{border-radius:12px!important}.suffix-input strong{border:1px solid #d8e0ee!important;border-radius:12px!important;min-height:38px;font-size:13px!important;margin-top:6px}
+  .tabs{gap:8px!important;padding:10px 14px!important}.tab{font-size:13px!important;white-space:nowrap}.tab-page{padding:14px!important}.detail-main h1{font-size:22px!important;word-break:break-all}.detail-main code{font-size:12px!important}.detail-actions{width:100%;flex-wrap:wrap}.detail-actions .btn{flex:1}
+  .info-card dl,.info-list{grid-template-columns:90px 1fr!important;gap:10px!important}.info-card dd,.info-list strong{font-size:13px!important}.table-wrap{margin:0 -6px;padding:0 6px}table{min-width:620px!important}th,td{padding:9px!important;font-size:12px!important}.stats{grid-template-columns:1fr 1fr!important;gap:8px!important}.stat{padding:12px!important}.stat strong{font-size:22px!important}
+}
+@media(max-width:430px){
+  .domain-metrics{grid-template-columns:1fr!important}.steps{grid-template-columns:1fr!important}.quota-hero{align-items:flex-start!important;flex-direction:column!important}.quota-left{margin-left:0!important;width:100%;text-align:left!important}.quota-hero .btn{width:100%}.topbar{padding:10px 12px!important}.topbar h1{max-width:calc(100vw - 120px)}
+}
+
+
+/* v20 mobile drawer + language + disabled domain note */
+.note-line{
+  margin:12px 0 0;
+  padding:10px 12px;
+  border:1px solid #fed7aa;
+  border-radius:12px;
+  background:#fff7ed;
+  color:#9a3412;
+  font-weight:700;
+  line-height:1.55;
+}
+.note-line b{font-weight:900;color:#7c2d12}
+.sidebar-mask{display:none}
+.topbar-actions{display:flex;align-items:center;gap:8px}
+.lang-toggle{min-width:52px}
+@media(max-width:760px){
+  .sidebar-mask{display:none;position:fixed;inset:0;background:rgba(15,23,42,.46);z-index:45}
+  .sidebar-mask.open{display:block}
+  body.sidebar-open{overflow:hidden}
+  .sidebar{width:min(78vw,260px);left:-280px;box-shadow:20px 0 60px rgba(0,0,0,.22)}
+  .sidebar.open{left:0}
+  .topbar-actions{gap:6px}
+  .topbar-actions .status-pill{display:none}
+  .lang-toggle{padding:7px 9px;min-width:44px;font-size:12px}
+}
