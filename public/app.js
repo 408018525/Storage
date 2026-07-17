@@ -27,7 +27,7 @@ function suffixList() {
 
 
 const I18N_EN = {
-  '初始化管理员':'Bootstrap Admin','首次部署需要创建管理员账户。':'Create the first admin account for this deployment.','初始化令牌':'Setup Token','管理员用户名':'Admin Username','邮箱':'Email','管理员密码':'Admin Password','至少 10 位，并包含字母和数字。':'At least 10 characters, including letters and numbers.','创建管理员':'Create Admin',
+  '初始化管理员':'Bootstrap Admin','首次部署需要创建管理员账户。':'Create the first admin account for this deployment.','初始化令牌':'Setup Token','管理员用户名':'Admin Username','邮箱':'Email','管理员密码':'Admin Password','至少 8 位。':'At least 8 characters.','创建管理员':'Create Admin',
   '登录':'Login','进入域名注册与管理中心。':'Access the domain registration and management center.','用户名或邮箱':'Username or Email','密码':'Password','30 天内保持登录':'Keep me signed in for 30 days','没有账户？':'No account?','注册':'Register','创建账户':'Create Account','注册后默认拥有 3 个域名额度。':'New users get 3 domain slots by default.','用户名':'Username','已有账户？':'Already have an account?','登录成功':'Login successful','注册成功，请使用刚才的账号密码登录':'Registration successful. Please log in.','注册成功，请等待管理员启用账户':'Registration successful. Please wait for admin activation.',
   '域名注册':'Domain Registration','域名管理':'Domain Management','账户设置':'Account Settings','管理概览':'Dashboard','域名审核':'Domain Review','用户管理':'Users','管理员设置':'Admin Settings','退出登录':'Logout','管理员':'Admin','普通用户':'User','启用':'Active','禁用':'Disabled','正常':'Active','待审核':'Pending','处理中':'Processing','已拒绝':'Rejected','已撤销':'Revoked','已删除':'Deleted','撤销中':'Revoking','待删除审核':'Delete Pending',
   '请勿申请违法、侵权、仿冒或误导性域名。':'Do not apply for illegal, infringing, impersonating, or misleading domains.','已注册':'Registered','剩余':'Remaining','＋ 注册新域名':'+ Register Domain','申请时只需要填写前缀和根域名。管理员批准后，再在“域名管理”中添加或管理多条 DNS 解析记录。':'Enter only the prefix and root domain. After admin approval, manage DNS records in Domain Management.','填写前缀':'Enter Prefix','提交审核':'Submit Review','管理员批准':'Admin Approval','配置 DNS':'Configure DNS','最近域名':'Recent Domains','全部域名':'All Domains','暂无域名，点击右上方注册新域名。':'No domains yet. Click Register Domain to start.','选择根域名':'Select Root Domain','请选择根域名':'Select root domain','域名前缀':'Domain Prefix','注册新域名':'Register New Domain','选择根域名并输入前缀，快速注册一个专属您的免费域名':'Choose a root domain and enter a prefix.','取消':'Cancel','提交申请':'Submit','审核通过后可配置':'Available after approval','审核通过后可配置 DNS':'DNS available after approval','注册时间':'Created','到期时间':'Expires','剩余时间':'Remaining','DNS':'DNS','管理域名':'Manage Domain','续期':'Renew','申请删除域名':'Request Deletion','删除待审核':'Delete Pending','删除无效域名':'Delete Invalid Domain','未配置':'Not configured','我的域名':'My Domains','到期时间、剩余时间、DNS 状态都在这里查看。':'View expiration, remaining time, and DNS status here.','暂无域名。':'No domains yet.',
@@ -123,7 +123,7 @@ Object.assign(I18N_EN, {
   '管理员可直接添加用户，并设置初始密码、角色、状态和额度。':'Admins can create users directly and set password, role, status, and quota.',
   '管理员手动创建用户账号':'Admin creates a user account manually.',
   '例如：user001':'Example: user001',
-  '至少 10 位，包含字母和数字':'At least 10 characters, including letters and numbers',
+  '至少 8 位':'At least 8 characters',
   '创建后用户可自行修改密码。':'The user can change the password later.',
   '人机验证：确认由管理员人工创建此账号':'Human verification: confirm this account is manually created by an admin',
   '网站标题':'Site Title',
@@ -622,9 +622,9 @@ async function renderSetup() {
   app.innerHTML = authTemplate('初始化管理员', '首次部署需要创建管理员账户。', `
     <form id="setup-form" class="form-grid">
       <label class="field wide"><span>初始化令牌</span><input name="setupToken" type="password" required></label>
-      <label class="field"><span>管理员用户名</span><input name="username" required minlength="3" maxlength="32"></label>
+      <label class="field"><span>管理员用户名</span><input name="username" required></label>
       <label class="field"><span>邮箱</span><input name="email" type="email"></label>
-      <label class="field wide"><span>管理员密码</span><input name="password" type="password" required minlength="10"><em>至少 10 位，并包含字母和数字。</em></label>
+      <label class="field wide"><span>管理员密码</span><input name="password" type="password" required minlength="8"><em>至少 8 位。</em></label>
       <button class="btn primary wide" type="submit">创建管理员</button>
     </form>`);
   document.querySelector('#setup-form').addEventListener('submit', async e => {
@@ -681,9 +681,9 @@ async function renderRegister() {
   const turn = state.config.turnstile || {};
   app.innerHTML = authTemplate('创建账户', '注册后默认拥有 3 个域名额度。', `
     <form id="register-form" class="form-grid">
-      <label class="field"><span>用户名</span><input name="username" required minlength="3" maxlength="32"></label>
+      <label class="field"><span>用户名</span><input name="username" required></label>
       <label class="field"><span>邮箱</span><input name="email" type="email"></label>
-      <label class="field wide"><span>密码</span><input name="password" type="password" required minlength="10"><em>至少 10 位，并包含字母和数字。</em></label>
+      <label class="field wide"><span>密码</span><input name="password" type="password" required minlength="8"><em>至少 8 位。</em></label>
       ${turn.enabledRegister ? '<div class="wide"><div id="turnstile-box"></div></div>' : ''}
       <button class="btn primary wide" type="submit">注册</button>
     </form>
@@ -1182,7 +1182,7 @@ async function renderAccount() {
   shell('账户设置', `
     <div class="grid two">
       <section class="card"><h2>账户信息</h2><div class="info-list"><span>用户名</span><strong>${esc(state.me.username)}</strong><span>角色</span><strong>${state.me.role === 'admin' ? '管理员' : '普通用户'}</strong><span>域名额度</span><strong>${esc(state.me.domainQuota || state.quota.total || 3)}</strong></div></section>
-      <section class="card"><h2>修改密码</h2><form id="password-form" class="form-grid"><label class="field wide"><span>当前密码</span><input name="currentPassword" type="password" required></label><label class="field wide"><span>新密码</span><input name="newPassword" type="password" required minlength="10"></label><button class="btn primary wide" type="submit">修改密码</button></form></section>
+      <section class="card"><h2>修改密码</h2><form id="password-form" class="form-grid"><label class="field wide"><span>当前密码</span><input name="currentPassword" type="password" required></label><label class="field wide"><span>新密码</span><input name="newPassword" type="password" required minlength="8"></label><button class="btn primary wide" type="submit">修改密码</button></form></section>
       <section class="card danger-zone account-delete-card"><h2>注销账号</h2><p>注销后账号将无法登录。为避免域名遗留，账户下仍有正常域名时需要先申请删除域名并等待管理员批准。</p><button class="btn danger" id="delete-account" type="button">注销账号</button></section>
     </div>`);
   document.querySelector('#password-form').addEventListener('submit', async e => {
@@ -1317,9 +1317,9 @@ async function showCreateUserModal() {
   openModal(tr('添加用户'), tr('管理员手动创建用户账号'), `
     <form id="create-user-form" class="modal-form">
       <div class="form-grid">
-        <label class="field"><span>${tr('账号')}</span><input name="username" required minlength="3" maxlength="32" placeholder="${tr('例如：user001')}"></label>
+        <label class="field"><span>${tr('账号')}</span><input name="username" required placeholder="${tr('例如：user001')}"></label>
         <label class="field"><span>${tr('邮箱')}</span><input name="email" type="email" placeholder="user@example.com"></label>
-        <label class="field wide"><span>${tr('初始密码')}</span><input name="password" type="password" required minlength="10" placeholder="${tr('至少 10 位，包含字母和数字')}"><em>${tr('创建后用户可自行修改密码。')}</em></label>
+        <label class="field wide"><span>${tr('初始密码')}</span><input name="password" type="password" required minlength="8" placeholder="${tr('至少 8 位')}"><em>${tr('创建后用户可自行修改密码。')}</em></label>
         <label class="field"><span>${tr('角色')}</span><select name="role"><option value="user">${tr('用户')}</option><option value="admin">${tr('管理员')}</option></select></label>
         <label class="field"><span>${tr('状态')}</span><select name="status"><option value="active">${tr('启用')}</option><option value="disabled">${tr('禁用')}</option></select></label>
         <label class="field wide"><span>${tr('域名额度')}</span><input name="domainQuota" type="number" min="0" max="9999" value="${attr(defaultQuota)}"></label>
