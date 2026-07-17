@@ -181,7 +181,8 @@ export default {
         return json({ ok: false, code: error.code, message: error.message, details: error.details }, error.status);
       }
       console.error(error);
-      return json({ ok: false, code: 'INTERNAL_ERROR', message: '服务器内部错误' }, 500);
+      const message = error instanceof Error && error.message ? error.message : '服务器内部错误';
+      return json({ ok: false, code: 'INTERNAL_ERROR', message }, 500);
     }
   },
 };
