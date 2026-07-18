@@ -368,7 +368,7 @@ Object.assign(I18N_EN, {
 
 Object.assign(I18N_EN, {
   '欢迎登录':'Welcome Back',
-  '登录到您的 STORAGE 账户':'Sign in to your STORAGE account',
+  '登录到您的free二级域名系统账户':'Sign in to your free subdomain system account',
   '用户名或账户邮箱':'Username or Account Email',
   '用户名或账户邮箱/手机号':'Username / Email / Phone',
   '请输入密码':'Enter your password',
@@ -557,7 +557,6 @@ function currentRouteCanAutoRefresh() {
   return hash === '#/apply'
     || hash === '#/domains'
     || hash === '#/applications'
-    || hash === '#/messages'
     || hash === '#/logs'
     || hash === '#/admin'
     || hash === '#/admin/applications'
@@ -798,9 +797,9 @@ async function renderLogin() {
       </section>
       <section class="auth-card login-compact-card">
         <div class="login-compact-head">
-          <div class="login-lock">🔒</div>
+          <div class="login-free-mark">free</div>
           <h2>欢迎登录</h2>
-          <p>登录到您的 STORAGE 账户</p>
+          <p>登录到您的free二级域名系统账户</p>
         </div>
         <form id="login-form" class="login-compact-form">
           <label class="login-field">
@@ -2157,12 +2156,12 @@ async function renewDomain(id) {
 
 function deviceTableHtml(devices = []) {
   if (!devices.length) return '<div class="empty">暂无已登录设备</div>';
-  return `<div class="table-wrap device-table-wrap"><table class="device-table"><thead><tr><th>设备名称</th><th>类型</th><th>设备型号</th><th>第一次登录时间</th><th>最近一次使用时间</th></tr></thead><tbody>${devices.map(d => `<tr><td><strong>${esc(d.deviceName || '未知设备')}</strong></td><td>${esc(d.deviceType || '未知')}</td><td>${esc(d.deviceModel || '未知')}</td><td>${fmtDate(d.firstLoginAt, true)}</td><td>${fmtDate(d.lastUsedAt, true)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap device-table-wrap"><table class="device-table"><thead><tr><th>设备名称</th><th>类型</th><th>设备IP</th><th>设备型号</th><th>第一次登录时间</th><th>最近一次使用时间</th></tr></thead><tbody>${devices.map(d => `<tr><td><strong>${esc(d.deviceName || '未知设备')}</strong></td><td>${esc(d.deviceType || '未知')}</td><td>${esc(d.ip || '未知')}</td><td>${esc(d.deviceModel || '未知')}</td><td>${fmtDate(d.firstLoginAt, true)}</td><td>${fmtDate(d.lastUsedAt, true)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 function deviceCardsHtml(devices = []) {
   if (!devices.length) return '<div class="empty">暂无已登录设备</div>';
-  return `<div class="device-card-list">${devices.map(d => `<article class="device-card"><div><strong>${esc(d.deviceName || '未知设备')}</strong><span>${esc(d.deviceType || '未知')} · ${esc(d.deviceModel || '未知')}</span></div><div class="device-times"><span>第一次登录：${fmtDate(d.firstLoginAt, true)}</span><span>最近使用：${fmtDate(d.lastUsedAt, true)}</span></div></article>`).join('')}</div>`;
+  return `<div class="device-card-list">${devices.map(d => `<article class="device-card"><div><strong>${esc(d.deviceName || '未知设备')}</strong><span>${esc(d.deviceType || '未知')} · ${esc(d.deviceModel || '未知')}</span><span>设备IP：${esc(d.ip || '未知')}</span></div><div class="device-times"><span>第一次登录：${fmtDate(d.firstLoginAt, true)}</span><span>最近使用：${fmtDate(d.lastUsedAt, true)}</span></div></article>`).join('')}</div>`;
 }
 
 async function showUserDevicesModal(u) {
@@ -2192,7 +2191,7 @@ async function renderAccount() {
     <div class="grid two">
       <section class="card"><h2>账户信息</h2><div class="info-list"><span>用户名</span><strong>${esc(state.me.username)}</strong><span>角色</span><strong>${state.me.role === 'admin' ? '管理员' : '普通用户'}</strong><span>域名额度</span><strong>${esc(state.me.domainQuota ?? state.quota.total ?? 3)}</strong></div></section>
       <section class="card"><h2>修改密码</h2><form id="password-form" class="form-grid"><label class="field wide"><span>当前密码</span><input name="currentPassword" type="password" required></label><label class="field wide"><span>新密码</span><input name="newPassword" type="password" required minlength="8"></label><button class="btn primary wide" type="submit">修改密码</button></form></section>
-      <section class="card wide"><div class="section-head"><div><h2>登录设备管理</h2><p>当前同账号已登录设备数量：${devices.length} 台。可以查看设备名称、首次登录和最近使用时间。</p></div></div>${deviceCardsHtml(devices)}</section>
+      <section class="card wide"><div class="section-head"><div><h2>登录设备管理</h2><p>当前同账号已登录设备数量：${devices.length} 台。可以查看设备名称、设备IP、设备型号、首次登录和最近使用时间。</p></div></div>${deviceCardsHtml(devices)}</section>
       <section class="card danger-zone account-delete-card"><h2>注销账号</h2><p>注销后账号将无法登录。为避免域名遗留，账户下仍有正常域名时需要先申请删除域名并等待管理员批准。</p><button class="btn danger" id="delete-account" type="button">注销账号</button></section>
     </div>`);
   document.querySelector('#password-form').addEventListener('submit', async e => {
