@@ -1281,3 +1281,38 @@ th { font-size: 12px; }
 .message-meta span {
   word-break: break-word;
 }
+
+
+/* v51 global scale, login logo, device display, and message refresh fix */
+html, body { min-height: 100%; }
+body { zoom: 0.8; }
+@supports not (zoom: 1) {
+  body { transform: scale(.8); transform-origin: top left; width: 125%; min-height: 125vh; }
+}
+.login-compact-head .login-lock { display: none !important; }
+.login-free-mark {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 14px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  font-size: 22px;
+  font-weight: 950;
+  letter-spacing: -.5px;
+  box-shadow: 0 18px 42px rgba(79,99,246,.22);
+}
+.device-card-list { display: grid; gap: 12px; }
+.device-card span { display: block; color: #64748b; font-weight: 700; margin-top: 4px; }
+.device-table td { vertical-align: middle; }
+@media(max-width:900px){
+  .login-split-brand { display: block !important; order: -1; text-align: center; }
+  .login-split-brand .auth-logo { margin-left: auto !important; margin-right: auto !important; }
+  .login-split-wrap { align-content: start; }
+}
+@media(max-width:520px){
+  .login-free-mark { width: 50px; height: 50px; border-radius: 18px; font-size: 19px; }
+  .login-split-brand { margin-bottom: 4px; }
+}
