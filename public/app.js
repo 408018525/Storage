@@ -686,7 +686,7 @@ Object.assign(I18N_EN, {
 
 Object.assign(I18N_EN, {
   '操作日志':'Operation Logs','最近操作记录':'Recent Operation Logs','仅显示最近 7 天内的账号注册域名、解析等部分操作记录。':'Only account, domain, DNS and related operations from the last 7 days are shown.','管理员可查看近 7 天内未注销账号的操作记录；普通用户仅查看自己的记录。':'Admins can view logs for non-deleted accounts from the last 7 days. Regular users can only view their own logs.','暂无操作记录。':'No operation logs.','操作类型':'Action','操作人':'Operator','操作说明':'Description','目标对象':'Target','IP 地址':'IP Address','保留时间':'Retention','7 天':'7 days','日志会自动清理：超过 7 天、或账号注销后的记录会从 D1 中删除。':'Logs are automatically cleaned from D1 after 7 days or when the account is cancelled.','正在读取操作日志…':'Loading operation logs…','系统':'System','未知用户':'Unknown User',
-  '方式一：站内消息':'Method 1: In-site message','在下方填写标题和内容，消息会直接进入管理员的消息中心，适合已经登录后反馈域名、DNS、额度、审核等问题。':'Fill in the title and content below. The message will go directly to the admin Message Center. Use it for domain, DNS, quota, and review issues after login.','方式二：外部联系':'Method 2: External contact','点击右上角“其他：联系我们”会打开外部反馈页面，适合无法登录、无法收到消息、需要提交截图或更详细资料的情况。':'Click “Other: Contact Us” in the upper right to open the external contact form. Use it when you cannot log in, cannot receive messages, or need to submit screenshots/details.','其他：联系我们':'Other: Contact Us','直接发消息给管理员':'Send a message to admin','发送给管理员':'Send to Admin','请填写要反馈的问题标题':'Enter the issue title','请详细描述您遇到的问题、页面位置、操作步骤和错误提示':'Describe the issue, page, steps, and error message in detail','消息已发送到管理员消息中心':'Message sent to admin Message Center','请填写标题和内容':'Please enter title and content','回复':'Reply','撤销':'Withdraw','撤销消息':'Withdraw Message','确认撤销这条已发送消息？撤销后对方将无法继续查看。':'Withdraw this sent message? The recipient will no longer be able to view it.','消息已撤销':'Message withdrawn','已超过 15 分钟，不能撤销':'More than 15 minutes have passed; this message cannot be withdrawn.','回复消息':'Reply Message','回复内容':'Reply Content','请输入回复内容':'Enter reply content','发送回复':'Send Reply','消息已回复':'Reply sent','原信息':'Original Message','已转到消息中心':'Moved to Message Center'
+  '方式一：站内消息':'Method 1: In-site message','在下方填写标题和内容，消息会直接进入管理员的消息中心，适合已经登录后反馈域名、DNS、额度、审核等问题。':'Fill in the title and content below. The message will go directly to the admin Message Center. Use it for domain, DNS, quota, and review issues after login.','方式二：外部联系':'Method 2: External contact','点击右上角“其他：联系我们”会打开外部反馈页面，适合无法登录、无法收到消息、需要提交截图或更详细资料的情况。':'Click “Other: Contact Us” in the upper right to open the external contact form. Use it when you cannot log in, cannot receive messages, or need to submit screenshots/details.','其他：联系我们':'Other: Contact Us','直接发消息给管理员':'Send a message to admin','发送给管理员':'Send to Admin','请填写要反馈的问题标题':'Enter the issue title','请详细描述您遇到的问题、页面位置、操作步骤和错误提示':'Describe the issue, page, steps, and error message in detail','消息已发送到管理员消息中心':'Message sent to admin Message Center','请填写标题和内容':'Please enter title and content','回复':'Reply','撤销':'Withdraw','撤销消息':'Withdraw Message','确认撤销这条已发送消息？撤销后对方将无法继续查看。':'Withdraw this sent message? The recipient will no longer be able to view it.','消息已撤销':'Message withdrawn','已超过 15 分钟，不能撤销':'More than 15 minutes have passed; this message cannot be withdrawn.','回复消息':'Reply Message','回复内容':'Reply Content','请输入回复内容':'Enter reply content','发送回复':'Send Reply','消息已回复':'Reply sent','原信息':'Original Message','已转到消息中心':'Moved to Message Center','资料已保存':'Profile saved','账号已复制':'Account copied','复制账号':'Copy account','手机号':'Phone','保存账户资料':'Save Account Info','未注销域名':'Uncancelled Domains','账户下还有未注销域名':'Uncancelled domains remain'
 });
 
 Object.assign(I18N_EN, {
@@ -719,6 +719,27 @@ async function init() {
 }
 
 function go(hash) { location.hash = hash; }
+
+async function copyToClipboard(text, successText = '已复制') {
+  const value = String(text || '');
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+    else {
+      const input = document.createElement('textarea');
+      input.value = value;
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    toast(successText, 'success');
+  } catch (error) {
+    toast('复制失败，请手动复制', 'error');
+  }
+}
+
 window.addEventListener('hashchange', renderRoute);
 
 async function route() {
@@ -2295,11 +2316,45 @@ async function renderAccount() {
   }
   shell('账户设置', `
     <div class="grid two">
-      <section class="card"><h2>账户信息</h2><div class="info-list"><span>用户名</span><strong>${esc(state.me.username)}</strong><span>角色</span><strong>${state.me.role === 'admin' ? '管理员' : '普通用户'}</strong><span>域名额度</span><strong>${esc(state.me.domainQuota ?? state.quota.total ?? 3)}</strong></div></section>
+      <section class="card">
+        <h2>账户信息</h2>
+        <div class="info-list account-info-list">
+          <span>用户名</span>
+          <strong class="copy-line"><span>${esc(state.me.username)}</span><button type="button" class="copy-mini" data-copy-account="${attr(state.me.username)}" title="复制账号">⧉</button></strong>
+          <span>手机号</span><strong>${esc(state.me.phone || '未填写')}</strong>
+          <span>邮箱</span><strong>${esc(state.me.email || '未填写')}</strong>
+          <span>角色</span><strong>${state.me.role === 'admin' ? '管理员' : '普通用户'}</strong>
+          <span>域名额度</span><strong>${esc(state.me.domainQuota ?? state.quota.total ?? 3)}</strong>
+        </div>
+      </section>
+      <section class="card">
+        <h2>修改账户资料</h2>
+        <form id="profile-form" class="form-grid">
+          <label class="field wide"><span>用户名</span><input name="username" value="${attr(state.me.username || '')}" required></label>
+          <label class="field wide"><span>手机号（选填）</span><input name="phone" value="${attr(state.me.phone || '')}" placeholder="例如：+8613800000000"></label>
+          <label class="field wide"><span>邮箱（选填）</span><input name="email" value="${attr(state.me.email || '')}" placeholder="user@example.com"></label>
+          <button class="btn primary wide" type="submit">保存账户资料</button>
+        </form>
+      </section>
       <section class="card"><h2>修改密码</h2><form id="password-form" class="form-grid"><label class="field wide"><span>当前密码</span><input name="currentPassword" type="password" required></label><label class="field wide"><span>新密码</span><input name="newPassword" type="password" required minlength="8"></label><button class="btn primary wide" type="submit">修改密码</button></form></section>
       <section class="card wide"><div class="section-head"><div><h2>登录设备管理</h2><p>当前同账号已登录设备数量：${devices.length} 台。可以查看设备名称、设备IP、设备型号、首次登录和最近使用时间。</p></div></div>${deviceCardsHtml(devices)}</section>
-      <section class="card danger-zone account-delete-card"><h2>注销账号</h2><p>注销后账号将无法登录。为避免域名遗留，账户下仍有正常域名时需要先申请删除域名并等待管理员批准。</p><button class="btn danger" id="delete-account" type="button">注销账号</button></section>
+      <section class="card danger-zone account-delete-card"><h2>注销账号</h2><p>注销前必须先处理完账号下所有正常、待审核或待删除审核域名。没有未注销域名后，才可以注销程序账号。</p><button class="btn danger" id="delete-account" type="button">注销账号</button></section>
     </div>`);
+  document.querySelector('[data-copy-account]')?.addEventListener('click', e => copyToClipboard(e.currentTarget.dataset.copyAccount, '已复制'));
+  document.querySelector('#profile-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = e.submitter;
+    btn.disabled = true;
+    try {
+      const res = await api('/api/account/profile', { method:'PATCH', body:Object.fromEntries(new FormData(e.currentTarget)) });
+      state.me = res.user;
+      toast('资料已保存', 'success');
+      await renderAccount();
+    } catch (error) {
+      toast(error.message, 'error');
+      btn.disabled = false;
+    }
+  });
   document.querySelector('#password-form').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.submitter;
@@ -2316,18 +2371,33 @@ async function renderAccount() {
   });
   document.querySelector('#delete-account')?.addEventListener('click', showDeleteAccountModal);
 }
-function showDeleteAccountModal() {
+async function showDeleteAccountModal() {
+  let blockingDomains = [];
+  try {
+    const res = await api('/api/applications');
+    blockingDomains = (res.applications || []).filter(a => !['rejected','revoked','deleted'].includes(a.status));
+  } catch (error) {
+    console.warn('load applications before delete failed', error);
+  }
+  const hasBlocking = blockingDomains.length > 0;
+  const domainListHtml = hasBlocking ? `
+    <div class="delete-box blocking-domain-box">
+      <p class="danger-text">当前账号还有以下域名没有完成注销，暂时不能注销程序账号：</p>
+      <ul class="blocking-domain-list">${blockingDomains.map(a => `<li><strong>${esc(a.fqdnUnicode || a.fqdnAscii || '')}</strong><span>${esc(a.deleteRequested ? '待删除审核' : (a.statusText || a.status || '未处理'))}</span></li>`).join('')}</ul>
+      <p>请先进入“域名管理”申请删除这些域名，并等待管理员批准后再回来注销账号。</p>
+    </div>` : '';
   openModal('注销账号', '此操作不可直接恢复，请谨慎确认。', `
     <form id="delete-account-form" class="modal-form">
-      <div class="delete-box"><p>当前账号：</p><strong>${esc(state.me.username)}</strong><p class="danger-text">注销后将退出登录，账号状态变为已删除。</p></div>
-      <label class="field wide"><span>当前密码</span><input name="currentPassword" type="password" required></label>
-      <label class="field wide"><span>输入当前账号确认</span><input name="confirmAccount" placeholder="${attr(state.me.username)}" autocomplete="off" required><em>当前账号必须完全一致。</em></label>
+      <div class="delete-box"><p>当前账号：</p><strong>${esc(state.me.username)}</strong><p class="danger-text">注销后将退出登录，账号和相关数据会从 D1 / KV 中清理。</p></div>
+      ${domainListHtml}
+      <label class="field wide"><span>当前密码</span><input name="currentPassword" type="password" required ${hasBlocking ? 'disabled' : ''}></label>
+      <label class="field wide"><span>输入当前账号确认</span><input name="confirmAccount" placeholder="${attr(state.me.username)}" autocomplete="off" required ${hasBlocking ? 'disabled' : ''}><em>${hasBlocking ? '请先注销上方域名后再操作。' : '当前账号必须完全一致。'}</em></label>
       <div class="modal-actions"><button type="button" class="btn secondary" data-cancel>取消</button><button class="btn danger" id="confirm-delete-account" type="submit" disabled>确认注销</button></div>
     </form>
   `, 'wide');
   const form = document.querySelector('#delete-account-form');
   document.querySelector('[data-cancel]').addEventListener('click', closeModal);
-  bindExactConfirmInput(form, 'input[name="confirmAccount"]', '#confirm-delete-account', [state.me.username]);
+  if (!hasBlocking) bindExactConfirmInput(form, 'input[name="confirmAccount"]', '#confirm-delete-account', [state.me.username]);
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.submitter;
@@ -2339,7 +2409,12 @@ function showDeleteAccountModal() {
       state.me = null;
       go('#/login');
     } catch (error) {
-      toast(error.message, 'error');
+      const domains = error?.details?.domains || [];
+      if (Array.isArray(domains) && domains.length) {
+        toast(`账户下还有未注销域名：${domains.map(d => d.domain).join('、')}`, 'error');
+      } else {
+        toast(error.message, 'error');
+      }
       btn.disabled = false;
     }
   });
